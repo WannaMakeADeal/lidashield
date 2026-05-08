@@ -1,248 +1,231 @@
 import os
-import re
 import base64
-import time
-import hashlib
 import requests
-from datetime import datetime, date
+from datetime import date
 from collections import defaultdict
+from urllib.parse import urlparse
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
-GSB_API_KEY     = os.environ.get("GSB_API_KEY", "")
-URLSCAN_API_KEY = os.environ.get("URLSCAN_API_KEY", "")
+GSB_API_KEY = os.environ.get("GSB_API_KEY", "")
 
-# ── Rate Limiting (in-memory, resets on redeploy — fine for now) ──────────────
+# ── Rate Limiting ─────────────────────────────────────────────────────────────
 DAILY_FREE_LIMIT = 10
 scan_counts = defaultdict(lambda: {"count": 0, "date": str(date.today())})
 
+
 def get_client_ip():
-    return request.headers.get("X-Forwarded-For", request.remote_addr).split(",")[0].strip()
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.remote_addr or "unknown"
+
 
 def check_rate_limit(ip):
     today = str(date.today())
+
     if scan_counts[ip]["date"] != today:
         scan_counts[ip] = {"count": 0, "date": today}
+
     if scan_counts[ip]["count"] >= DAILY_FREE_LIMIT:
         return False
+
     scan_counts[ip]["count"] += 1
     return True
 
+
 def scans_remaining(ip):
     today = str(date.today())
+
     if scan_counts[ip]["date"] != today:
         return DAILY_FREE_LIMIT
+
     return max(0, DAILY_FREE_LIMIT - scan_counts[ip]["count"])
 
-# ── Input Validation ──────────────────────────────────────────────────────────
-URL_REGEX = re.compile(
-    r'^(https?://)?([\w\-]+\.)+[\w\-]{2,}(/[\w\-./?%&=]*)?$', re.IGNORECASE
-)
 
+# ── URL Validation ────────────────────────────────────────────────────────────
 def validate_url(raw):
-    raw = raw.strip()
     if not raw:
         return None, "Please enter a URL."
+
+    raw = raw.strip()
+
     if len(raw) > 2000:
         return None, "URL is too long."
-    # Strip protocol for validation
-    check = raw
-    if check.startswith(("http://", "https://")):
-        check = check.split("://", 1)[1]
-    if "." not in check:
-        return None, f'"{raw}" doesn\'t look like a valid URL. Try including a domain like .com or .sg'
-    url = raw if raw.startswith(("http://", "https://")) else "https://" + raw
-    return url, None
 
+    if not raw.startswith(("http://", "https://")):
+        raw = "https://" + raw
 
-def vt_url_id(url):
-    return base64.urlsafe_b64encode(url.encode()).decode().rstrip("=")
+    parsed = urlparse(raw)
 
-def scan_virustotal(url):
-    VT_API_KEY = os.environ.get("VT_API_KEY","")
-    if not VT_API_KEY:
-        return None
-    try:
-        url_id = vt_url_id(url)
-        r = requests.get("https://www.virustotal.com/api/v3/urls/" + url_id,
-            headers={"x-apikey": VT_API_KEY}, timeout=10)
-        if r.status_code == 404:
-            requests.post("https://www.virustotal.com/api/v3/urls",
-                headers={"x-apikey": VT_API_KEY}, data={"url": url}, timeout=10)
-            import time; time.sleep(4)
-            r = requests.get("https://www.virustotal.com/api/v3/urls/" + url_id,
-                headers={"x-apikey": VT_API_KEY}, timeout=10)
-        if r.status_code != 200:
-            return None
-        attrs = r.json().get("data",{}).get("attributes",{})
-        stats = attrs.get("last_analysis_stats",{})
-        mal = stats.get("malicious",0); sus = stats.get("suspicious",0)
-        flagged = [n for n,res in attrs.get("last_analysis_results",{}).items()
-                   if res.get("category") in ("malicious","suspicious")]
-        return {"source":"VirusTotal","malicious":mal,"suspicious":sus,
-                "harmless":stats.get("harmless",0),"undetected":stats.get("undetected",0),
-                "total":mal+sus+stats.get("harmless",0)+stats.get("undetected",0),
-                "flagged_by":flagged[:10],"url":attrs.get("url",url)}
-    except Exception as e:
-        print("[VT] Exception:", e)
-        return None
+    if not parsed.netloc or "." not in parsed.netloc:
+        return None, "That does not look like a valid website URL."
+
+    return raw, None
+
 
 # ── Google Safe Browsing ──────────────────────────────────────────────────────
-def scan_gsb(url):
+def scan_google_safe_browsing(url):
     if not GSB_API_KEY:
         return None
+
     payload = {
-        "client": {"clientId": "lidashield", "clientVersion": "1.0"},
+        "client": {
+            "clientId": "lidashield",
+            "clientVersion": "1.0"
+        },
         "threatInfo": {
-            "threatTypes": ["MALWARE","SOCIAL_ENGINEERING","UNWANTED_SOFTWARE","POTENTIALLY_HARMFUL_APPLICATION"],
+            "threatTypes": [
+                "MALWARE",
+                "SOCIAL_ENGINEERING",
+                "UNWANTED_SOFTWARE",
+                "POTENTIALLY_HARMFUL_APPLICATION"
+            ],
             "platformTypes": ["ANY_PLATFORM"],
             "threatEntryTypes": ["URL"],
-            "threatEntries": [{"url": url}]
+            "threatEntries": [
+                {
+                    "url": url
+                }
+            ]
         }
     }
+
     try:
-        r = requests.post(
+        response = requests.post(
             f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={GSB_API_KEY}",
-            json=payload, timeout=8
+            json=payload,
+            timeout=4
         )
-        if r.status_code != 200:
+
+        if response.status_code != 200:
+            print("[Google Safe Browsing] Status:", response.status_code)
+            print("[Google Safe Browsing] Body:", response.text[:300])
             return None
-        matches = r.json().get("matches", [])
+
+        data = response.json()
+        matches = data.get("matches", [])
+
         return {
             "source": "Google Safe Browsing",
+            "available": True,
             "flagged": len(matches) > 0,
-            "threat_types": list({m.get("threatType","") for m in matches})
+            "threat_types": list({
+                match.get("threatType", "UNKNOWN")
+                for match in matches
+            })
         }
-    except Exception:
+
+    except Exception as error:
+        print("[Google Safe Browsing] Error:", str(error))
         return None
 
-# ── URLScan.io ────────────────────────────────────────────────────────────────
-def scan_urlscan(url):
-    if not URLSCAN_API_KEY:
-        print("[URLScan] No API key set")
-        return None
-    try:
-        submit = requests.post(
-            "https://urlscan.io/api/v1/scan/",
-            headers={"API-Key": URLSCAN_API_KEY.strip(), "Content-Type": "application/json"},
-            json={"url": url, "visibility": "unlisted"},
-            timeout=8
-        )
-        print("[URLScan] Submit status:", submit.status_code, "body:", submit.text[:300])
-        if submit.status_code not in (200, 201):
-            return None
-        scan_uuid = submit.json().get("uuid")
-        if not scan_uuid:
-            print("[URLScan] No UUID returned")
-            return None
-        print("[URLScan] UUID:", scan_uuid, "waiting 15s")
-        time.sleep(15)
-        result = requests.get(
-            "https://urlscan.io/api/v1/result/" + scan_uuid + "/",
-            timeout=10
-        )
-        print("[URLScan] Result status:", result.status_code)
-        if result.status_code != 200:
-            print("[URLScan] Error:", result.text[:300])
-            return None
-        data = result.json()
-        verdicts = data.get("verdicts", {}).get("overall", {})
-        print("[URLScan] Verdict:", verdicts)
-        return {
-            "source":     "URLScan.io",
-            "malicious":  verdicts.get("malicious", False),
-            "score":      verdicts.get("score", 0),
-            "tags":       verdicts.get("tags", []),
-            "screenshot": data.get("task", {}).get("screenshotURL", ""),
-        }
-    except Exception as e:
-        print("[URLScan] Exception:", str(e))
-        return None
 
 # ── PhishTank ─────────────────────────────────────────────────────────────────
 def scan_phishtank(url):
     try:
-        r = requests.post(
+        response = requests.post(
             "https://checkurl.phishtank.com/checkurl/",
             data={
                 "url": base64.b64encode(url.encode()).decode(),
                 "format": "json",
-                "app_key": ""   # works without key, just slower
+                "app_key": ""
             },
-            headers={"User-Agent": "LidaShield/1.0"},
-            timeout=8
+            headers={
+                "User-Agent": "LidaShield/1.0"
+            },
+            timeout=4
         )
-        if r.status_code != 200:
+
+        if response.status_code != 200:
+            print("[PhishTank] Status:", response.status_code)
+            print("[PhishTank] Body:", response.text[:300])
             return None
-        data   = r.json().get("results", {})
-        in_db  = data.get("in_database", False)
-        valid  = data.get("valid", False)
+
+        data = response.json()
+        results = data.get("results", {})
+
+        in_database = bool(results.get("in_database", False))
+        valid = bool(results.get("valid", False))
+
         return {
-            "source":   "PhishTank",
-            "flagged":  in_db and valid,
-            "in_db":    in_db,
+            "source": "PhishTank",
+            "available": True,
+            "flagged": in_database and valid,
+            "in_database": in_database,
+            "valid": valid
         }
-    except Exception:
+
+    except Exception as error:
+        print("[PhishTank] Error:", str(error))
         return None
 
+
 # ── Verdict Builder ───────────────────────────────────────────────────────────
-def build_verdict(url, gsb, urlscan, phishtank):
-    danger_signals = []
-    warning_signals = []
+def build_verdict(url, gsb_result, phishtank_result):
     engines_checked = []
+    danger_signals = []
 
-    if gsb:
+    if gsb_result:
         engines_checked.append("Google Safe Browsing")
-        if gsb["flagged"]:
-            danger_signals.append(f"Google flagged as: {', '.join(gsb['threat_types'])}")
 
-    if phishtank:
+        if gsb_result.get("flagged"):
+            threat_types = gsb_result.get("threat_types", [])
+
+            if threat_types:
+                danger_signals.append(
+                    "Google Safe Browsing flagged this URL as: "
+                    + ", ".join(threat_types)
+                )
+            else:
+                danger_signals.append(
+                    "Google Safe Browsing flagged this URL."
+                )
+
+    if phishtank_result:
         engines_checked.append("PhishTank")
-        if phishtank["flagged"]:
-            danger_signals.append("Known phishing URL (PhishTank)")
 
-    if urlscan:
-        engines_checked.append("URLScan.io")
-        if urlscan["malicious"]:
-            danger_signals.append(f"URLScan flagged malicious (score: {urlscan['score']})")
-        elif urlscan["score"] and urlscan["score"] > 50:
-            warning_signals.append(f"URLScan suspicious (score: {urlscan['score']})")
+        if phishtank_result.get("flagged"):
+            danger_signals.append(
+                "PhishTank identifies this as a verified phishing URL."
+            )
 
     if not engines_checked:
-        return {"error": "No scanning engines available right now. Try again shortly."}
+        return {
+            "error": "No scan engines are available right now. Please try again later."
+        }
 
     if danger_signals:
-        verdict, verdict_class = "DANGEROUS", "danger"
-        message = "This link is flagged as dangerous. Do NOT proceed."
-    elif warning_signals:
-        verdict, verdict_class = "SUSPICIOUS", "warning"
-        message = "This link raised concerns with security engines. Proceed with extreme caution."
+        verdict = "DANGEROUS"
+        verdict_class = "danger"
+        message = "This link is listed by a trusted threat database. Do NOT proceed."
     else:
-        verdict, verdict_class = "SAFE", "safe"
-        message = "No threats detected by security engines."
+        verdict = "NOT FLAGGED"
+        verdict_class = "safe"
+        message = "This link was not found in the connected threat databases."
 
-    result = {
-        "verdict":          verdict,
-        "verdict_class":    verdict_class,
-        "message":          message,
-        "url":              url,
-        "engines_checked":  engines_checked,
-        "danger_signals":   danger_signals,
-        "warning_signals":  warning_signals,
+    return {
+        "verdict": verdict,
+        "verdict_class": verdict_class,
+        "message": message,
+        "url": url,
+        "engines_checked": engines_checked,
+        "danger_signals": danger_signals,
+        "warning_signals": [],
+        "note": "LidaShield checks trusted threat databases. A 'Not Flagged' result does not guarantee that a website is 100% safe."
     }
 
-    if urlscan and urlscan.get("screenshot"):
-        result["screenshot"] = urlscan["screenshot"]
-
-    return result
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route("/")
 def index():
-    with open(os.path.join(os.path.dirname(__file__), "index.html"), "r") as f:
-        return f.read()
+    file_path = os.path.join(os.path.dirname(__file__), "index.html")
+
+    with open(file_path, "r", encoding="utf-8") as file:
+        return file.read()
+
 
 @app.route("/scan", methods=["POST"])
 def scan():
@@ -250,24 +233,31 @@ def scan():
 
     if not check_rate_limit(ip):
         return jsonify({
-            "error": f"You've used all {DAILY_FREE_LIMIT} free scans for today. Upgrade to Shield for unlimited scans.",
+            "error": f"You've used all {DAILY_FREE_LIMIT} free scans for today.",
             "rate_limited": True,
             "scans_remaining": 0
         }), 429
 
-    body = request.get_json()
+    body = request.get_json(silent=True)
+
     if not body or not body.get("url"):
-        return jsonify({"error": "No URL provided."}), 400
+        return jsonify({
+            "error": "No URL provided.",
+            "scans_remaining": scans_remaining(ip)
+        }), 400
 
-    url, err = validate_url(body["url"])
-    if err:
-        return jsonify({"error": err}), 400
+    url, error = validate_url(body.get("url"))
 
-    gsb      = scan_gsb(url)
-    phish    = scan_phishtank(url)
-    urlsc    = scan_urlscan(url) if URLSCAN_API_KEY else None
+    if error:
+        return jsonify({
+            "error": error,
+            "scans_remaining": scans_remaining(ip)
+        }), 400
 
-    result = build_verdict(url, gsb, urlsc, phish)
+    gsb_result = scan_google_safe_browsing(url)
+    phishtank_result = scan_phishtank(url)
+
+    result = build_verdict(url, gsb_result, phishtank_result)
     result["scans_remaining"] = scans_remaining(ip)
 
     if "error" in result:
@@ -275,11 +265,30 @@ def scan():
 
     return jsonify(result)
 
+
 @app.route("/remaining", methods=["GET"])
 def remaining():
     ip = get_client_ip()
-    return jsonify({"scans_remaining": scans_remaining(ip), "limit": DAILY_FREE_LIMIT})
+
+    return jsonify({
+        "scans_remaining": scans_remaining(ip),
+        "limit": DAILY_FREE_LIMIT
+    })
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({
+        "status": "online",
+        "service": "LidaShield"
+    })
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        debug=False
+    )
