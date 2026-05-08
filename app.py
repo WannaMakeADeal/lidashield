@@ -56,6 +56,39 @@ def validate_url(raw):
     url = raw if raw.startswith(("http://", "https://")) else "https://" + raw
     return url, None
 
+
+def vt_url_id(url):
+    return base64.urlsafe_b64encode(url.encode()).decode().rstrip("=")
+
+def scan_virustotal(url):
+    VT_API_KEY = os.environ.get("VT_API_KEY","")
+    if not VT_API_KEY:
+        return None
+    try:
+        url_id = vt_url_id(url)
+        r = requests.get("https://www.virustotal.com/api/v3/urls/" + url_id,
+            headers={"x-apikey": VT_API_KEY}, timeout=10)
+        if r.status_code == 404:
+            requests.post("https://www.virustotal.com/api/v3/urls",
+                headers={"x-apikey": VT_API_KEY}, data={"url": url}, timeout=10)
+            import time; time.sleep(4)
+            r = requests.get("https://www.virustotal.com/api/v3/urls/" + url_id,
+                headers={"x-apikey": VT_API_KEY}, timeout=10)
+        if r.status_code != 200:
+            return None
+        attrs = r.json().get("data",{}).get("attributes",{})
+        stats = attrs.get("last_analysis_stats",{})
+        mal = stats.get("malicious",0); sus = stats.get("suspicious",0)
+        flagged = [n for n,res in attrs.get("last_analysis_results",{}).items()
+                   if res.get("category") in ("malicious","suspicious")]
+        return {"source":"VirusTotal","malicious":mal,"suspicious":sus,
+                "harmless":stats.get("harmless",0),"undetected":stats.get("undetected",0),
+                "total":mal+sus+stats.get("harmless",0)+stats.get("undetected",0),
+                "flagged_by":flagged[:10],"url":attrs.get("url",url)}
+    except Exception as e:
+        print("[VT] Exception:", e)
+        return None
+
 # ── Google Safe Browsing ──────────────────────────────────────────────────────
 def scan_gsb(url):
     if not GSB_API_KEY:
@@ -88,39 +121,44 @@ def scan_gsb(url):
 # ── URLScan.io ────────────────────────────────────────────────────────────────
 def scan_urlscan(url):
     if not URLSCAN_API_KEY:
+        print("[URLScan] No API key set")
         return None
     try:
-        # Submit scan
         submit = requests.post(
             "https://urlscan.io/api/v1/scan/",
-            headers={"API-Key": URLSCAN_API_KEY, "Content-Type": "application/json"},
+            headers={"API-Key": URLSCAN_API_KEY.strip(), "Content-Type": "application/json"},
             json={"url": url, "visibility": "unlisted"},
             timeout=8
         )
+        print("[URLScan] Submit status:", submit.status_code, "body:", submit.text[:300])
         if submit.status_code not in (200, 201):
             return None
         scan_uuid = submit.json().get("uuid")
         if not scan_uuid:
+            print("[URLScan] No UUID returned")
             return None
-        # Wait for result
-        time.sleep(12)
+        print("[URLScan] UUID:", scan_uuid, "waiting 15s")
+        time.sleep(15)
         result = requests.get(
-            f"https://urlscan.io/api/v1/result/{scan_uuid}/",
+            "https://urlscan.io/api/v1/result/" + scan_uuid + "/",
             timeout=10
         )
+        print("[URLScan] Result status:", result.status_code)
         if result.status_code != 200:
+            print("[URLScan] Error:", result.text[:300])
             return None
-        data     = result.json()
+        data = result.json()
         verdicts = data.get("verdicts", {}).get("overall", {})
+        print("[URLScan] Verdict:", verdicts)
         return {
-            "source":      "URLScan.io",
-            "malicious":   verdicts.get("malicious", False),
-            "score":       verdicts.get("score", 0),
-            "tags":        verdicts.get("tags", []),
-            "brands":      data.get("verdicts", {}).get("urlscan", {}).get("brands", []),
-            "screenshot":  data.get("task", {}).get("screenshotURL", ""),
+            "source":     "URLScan.io",
+            "malicious":  verdicts.get("malicious", False),
+            "score":      verdicts.get("score", 0),
+            "tags":       verdicts.get("tags", []),
+            "screenshot": data.get("task", {}).get("screenshotURL", ""),
         }
-    except Exception:
+    except Exception as e:
+        print("[URLScan] Exception:", str(e))
         return None
 
 # ── PhishTank ─────────────────────────────────────────────────────────────────
