@@ -103,7 +103,7 @@ def scan_urlscan(url):
         if not scan_uuid:
             return None
         # Wait for result
-        time.sleep(6)
+        time.sleep(12)
         result = requests.get(
             f"https://urlscan.io/api/v1/result/{scan_uuid}/",
             timeout=10
