@@ -1,1115 +1,458 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-  <title>LidaShield — Scam Intelligence Platform</title>
-
-  <style>
-    :root {
-      --bg: #050505;
-      --panel: #0d0d0d;
-      --panel-2: #151515;
-      --border: #242424;
-      --gold: #f5a623;
-      --gold-soft: #ffd36a;
-      --text: #f4ead2;
-      --muted: #a89978;
-      --danger: #ff4d4d;
-      --warning: #f5a623;
-      --safe: #40d873;
-      --unknown: #8f8f8f;
-      --shadow: rgba(245, 166, 35, 0.16);
-    }
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    html {
-      scroll-behavior: smooth;
-    }
-
-    body {
-      min-height: 100vh;
-      background:
-        radial-gradient(circle at top, rgba(245,166,35,0.12), transparent 35%),
-        linear-gradient(180deg, #080808 0%, #000 100%);
-      color: var(--text);
-      font-family: Arial, Helvetica, sans-serif;
-      overflow-x: hidden;
-    }
-
-    button,
-    input,
-    textarea {
-      font-family: inherit;
-    }
-
-    .page {
-      width: min(1120px, 100%);
-      margin: 0 auto;
-      padding: 18px;
-    }
-
-    .nav {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 16px;
-      padding: 16px 0 26px;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .brand-mark {
-      width: 46px;
-      height: 46px;
-      border: 1px solid rgba(245,166,35,0.45);
-      border-radius: 14px;
-      background: linear-gradient(145deg, #1b1304, #050505);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--gold);
-      font-weight: 900;
-      box-shadow: 0 0 26px var(--shadow);
-    }
-
-    .brand-title {
-      font-size: 1.15rem;
-      font-weight: 800;
-      letter-spacing: 0.02em;
-    }
-
-    .brand-sub {
-      color: var(--muted);
-      font-size: 0.82rem;
-      margin-top: 2px;
-    }
-
-    .nav-actions {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-    }
-
-    .pill {
-      border: 1px solid var(--border);
-      background: rgba(255,255,255,0.03);
-      color: var(--muted);
-      padding: 9px 12px;
-      border-radius: 999px;
-      font-size: 0.85rem;
-    }
-
-    .btn {
-      border: 0;
-      background: var(--gold);
-      color: #000;
-      padding: 11px 15px;
-      border-radius: 12px;
-      font-weight: 800;
-      cursor: pointer;
-      transition: transform 0.15s ease, opacity 0.15s ease;
-    }
-
-    .btn:hover {
-      transform: translateY(-1px);
-    }
-
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-      transform: none;
-    }
-
-    .btn.secondary {
-      background: transparent;
-      color: var(--gold-soft);
-      border: 1px solid rgba(245,166,35,0.38);
-    }
-
-    .hero {
-      display: grid;
-      grid-template-columns: 1.1fr 0.9fr;
-      gap: 18px;
-      align-items: stretch;
-      margin-bottom: 18px;
-    }
-
-    .hero-card,
-    .auth-card,
-    .panel,
-    .feature-card,
-    .pricing-card {
-      background: rgba(13,13,13,0.94);
-      border: 1px solid var(--border);
-      border-radius: 24px;
-      box-shadow: 0 18px 60px rgba(0,0,0,0.35);
-    }
-
-    .hero-card {
-      padding: 30px;
-    }
-
-    .eyebrow {
-      color: var(--gold);
-      font-size: 0.78rem;
-      font-weight: 800;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      margin-bottom: 14px;
-    }
-
-    h1 {
-      font-size: clamp(2rem, 6vw, 4.4rem);
-      line-height: 0.95;
-      letter-spacing: -0.06em;
-      margin-bottom: 18px;
-    }
-
-    .hero-text {
-      color: var(--muted);
-      font-size: 1rem;
-      line-height: 1.7;
-      max-width: 650px;
-    }
-
-    .hero-text strong {
-      color: var(--text);
-    }
-
-    .hero-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
-      margin-top: 24px;
-    }
-
-    .mini-stat {
-      background: #080808;
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 14px;
-    }
-
-    .mini-stat b {
-      display: block;
-      color: var(--gold-soft);
-      font-size: 1.1rem;
-      margin-bottom: 4px;
-    }
-
-    .mini-stat span {
-      color: var(--muted);
-      font-size: 0.8rem;
-    }
-
-    .auth-card {
-      padding: 22px;
-    }
-
-    .auth-card h2 {
-      margin-bottom: 8px;
-    }
-
-    .auth-card p {
-      color: var(--muted);
-      line-height: 1.5;
-      font-size: 0.92rem;
-      margin-bottom: 16px;
-    }
-
-    .tabs {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 14px;
-    }
-
-    .tab {
-      flex: 1;
-      padding: 10px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: #090909;
-      color: var(--muted);
-      cursor: pointer;
-      font-weight: 700;
-    }
-
-    .tab.active {
-      background: rgba(245,166,35,0.12);
-      color: var(--gold-soft);
-      border-color: rgba(245,166,35,0.45);
-    }
-
-    .input,
-    .textarea,
-    .select {
-      width: 100%;
-      background: #070707;
-      border: 1px solid var(--border);
-      color: var(--text);
-      border-radius: 14px;
-      padding: 14px;
-      outline: none;
-      font-size: 1rem;
-      margin-bottom: 10px;
-    }
-
-    .textarea {
-      min-height: 120px;
-      resize: vertical;
-      line-height: 1.5;
-    }
-
-    .input:focus,
-    .textarea:focus,
-    .select:focus {
-      border-color: rgba(245,166,35,0.7);
-      box-shadow: 0 0 0 4px rgba(245,166,35,0.08);
-    }
-
-    .main-app {
-      display: none;
-      margin-top: 18px;
-    }
-
-    .section-title {
-      display: flex;
-      justify-content: space-between;
-      align-items: end;
-      gap: 14px;
-      margin: 28px 0 14px;
-    }
-
-    .section-title h2 {
-      font-size: 1.5rem;
-    }
-
-    .section-title p {
-      color: var(--muted);
-      font-size: 0.9rem;
-      margin-top: 4px;
-    }
-
-    .features {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 14px;
-    }
-
-    .feature-card {
-      padding: 18px;
-    }
-
-    .feature-card h3 {
-      margin-bottom: 8px;
-      color: var(--gold-soft);
-    }
-
-    .feature-card p {
-      color: var(--muted);
-      line-height: 1.5;
-      font-size: 0.92rem;
-      margin-bottom: 14px;
-    }
-
-    .result {
-      display: none;
-      margin-top: 14px;
-      border-radius: 18px;
-      padding: 16px;
-      border: 1px solid var(--border);
-      background: #070707;
-    }
-
-    .result.danger {
-      border-color: rgba(255,77,77,0.42);
-      background: rgba(255,77,77,0.06);
-    }
-
-    .result.warning {
-      border-color: rgba(245,166,35,0.42);
-      background: rgba(245,166,35,0.07);
-    }
-
-    .result.safe {
-      border-color: rgba(64,216,115,0.42);
-      background: rgba(64,216,115,0.06);
-    }
-
-    .result.unknown {
-      border-color: rgba(143,143,143,0.42);
-      background: rgba(143,143,143,0.06);
-    }
-
-    .result-title {
-      font-weight: 900;
-      margin-bottom: 7px;
-    }
-
-    .result-msg {
-      color: var(--text);
-      line-height: 1.5;
-    }
-
-    .result-meta {
-      color: var(--muted);
-      font-size: 0.85rem;
-      margin-top: 10px;
-      word-break: break-word;
-    }
-
-    .dashboard-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
-    }
-
-    .dash-box {
-      background: #080808;
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      padding: 16px;
-    }
-
-    .dash-box b {
-      display: block;
-      color: var(--gold-soft);
-      font-size: 1.35rem;
-      margin-bottom: 4px;
-    }
-
-    .dash-box span {
-      color: var(--muted);
-      font-size: 0.86rem;
-    }
-
-    .pricing {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 14px;
-    }
-
-    .pricing-card {
-      padding: 20px;
-    }
-
-    .pricing-card.highlight {
-      border-color: rgba(245,166,35,0.7);
-      box-shadow: 0 0 40px var(--shadow);
-    }
-
-    .pricing-card h3 {
-      color: var(--gold-soft);
-      margin-bottom: 8px;
-    }
-
-    .price {
-      font-size: 1.8rem;
-      font-weight: 900;
-      margin-bottom: 12px;
-    }
-
-    .pricing-card ul {
-      list-style: none;
-      display: grid;
-      gap: 9px;
-      color: var(--muted);
-      margin-bottom: 18px;
-      line-height: 1.4;
-    }
-
-    .admin-panel {
-      display: none;
-    }
-
-    .admin-list {
-      display: grid;
-      gap: 10px;
-    }
-
-    .admin-item {
-      background: #080808;
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 14px;
-      word-break: break-word;
-    }
-
-    .admin-actions {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-top: 10px;
-    }
-
-    .notice {
-      padding: 13px 14px;
-      border: 1px solid rgba(245,166,35,0.35);
-      background: rgba(245,166,35,0.08);
-      color: var(--gold-soft);
-      border-radius: 14px;
-      margin-top: 12px;
-      line-height: 1.5;
-      display: none;
-    }
-
-    footer {
-      color: var(--muted);
-      border-top: 1px solid var(--border);
-      margin-top: 34px;
-      padding: 22px 0;
-      font-size: 0.88rem;
-      line-height: 1.5;
-    }
-
-    @media (max-width: 860px) {
-      .hero,
-      .features,
-      .pricing {
-        grid-template-columns: 1fr;
-      }
-
-      .dashboard-grid,
-      .hero-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-
-      .nav {
-        align-items: flex-start;
-        flex-direction: column;
-      }
-
-      .nav-actions {
-        justify-content: flex-start;
-      }
-    }
-
-    @media (max-width: 520px) {
-      .page {
-        padding: 14px;
-      }
-
-      .hero-card,
-      .auth-card,
-      .feature-card,
-      .pricing-card {
-        border-radius: 18px;
-        padding: 18px;
-      }
-
-      .dashboard-grid,
-      .hero-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .btn {
-        width: 100%;
-      }
-
-      .tabs .btn,
-      .nav-actions .btn,
-      .admin-actions .btn {
-        width: auto;
-      }
-    }
-  </style>
-</head>
-
-<body>
-  <div class="page">
-
-    <nav class="nav">
-      <div class="brand">
-        <div class="brand-mark">LS</div>
-        <div>
-          <div class="brand-title">LidaShield</div>
-          <div class="brand-sub">Database-backed scam intelligence</div>
-        </div>
-      </div>
-
-      <div class="nav-actions">
-        <div id="user-pill" class="pill">Not logged in</div>
-        <button id="logout-btn" class="btn secondary" onclick="logout()" style="display:none;">Logout</button>
-      </div>
-    </nav>
-
-    <section class="hero">
-      <div class="hero-card">
-        <div class="eyebrow">Singapore / SEA Scam Defense</div>
-        <h1>Your own scam database, not a wrapper.</h1>
-        <p class="hero-text">
-          LidaShield now checks links, messages, phone numbers, emails, and business audit requests using the
-          <strong>LidaShield database</strong>. No VirusTotal. No Google Safe Browsing. No URLScan. No hardcoded heuristic verdicts.
-        </p>
-
-        <div class="hero-grid">
-          <div class="mini-stat">
-            <b>15</b>
-            <span>feature roadmap</span>
-          </div>
-          <div class="mini-stat">
-            <b>Free</b>
-            <span>daily limits</span>
-          </div>
-          <div class="mini-stat">
-            <b>Pro</b>
-            <span>business audits</span>
-          </div>
-        </div>
-      </div>
-
-      <div id="auth-card" class="auth-card">
-        <h2>Enter LidaShield</h2>
-        <p>Create an account or log in. Free users can access the platform with daily limits.</p>
-
-        <div class="tabs">
-          <button id="login-tab" class="tab active" onclick="setAuthMode('login')">Login</button>
-          <button id="register-tab" class="tab" onclick="setAuthMode('register')">Register</button>
-        </div>
-
-        <input id="auth-email" class="input" type="email" placeholder="Email address" autocomplete="email" />
-        <input id="auth-password" class="input" type="password" placeholder="Password" autocomplete="current-password" />
-
-        <button id="auth-btn" class="btn" onclick="submitAuth()">Login</button>
-
-        <div id="auth-notice" class="notice"></div>
-      </div>
-    </section>
-
-    <main id="main-app" class="main-app">
-
-      <section class="panel" style="padding:18px;">
-        <div class="section-title" style="margin-top:0;">
-          <div>
-            <h2>Dashboard</h2>
-            <p>Your plan, usage, and database growth.</p>
-          </div>
-          <button class="btn secondary" onclick="loadDashboard()">Refresh</button>
-        </div>
-
-        <div class="dashboard-grid">
-          <div class="dash-box">
-            <b id="dash-plan">Free</b>
-            <span>Current plan</span>
-          </div>
-          <div class="dash-box">
-            <b id="dash-limit">10</b>
-            <span>Daily feature limit</span>
-          </div>
-          <div class="dash-box">
-            <b id="dash-records">0</b>
-            <span>Link records</span>
-          </div>
-          <div class="dash-box">
-            <b id="dash-confirmed">0</b>
-            <span>Confirmed scam links</span>
-          </div>
-        </div>
-      </section>
-
-      <div class="section-title">
-        <div>
-          <h2>Core tools</h2>
-          <p>All verdicts come from your own database records.</p>
-        </div>
-      </div>
-
-      <section class="features">
-
-        <div class="feature-card">
-          <h3>1. Link checker</h3>
-          <p>Checks whether a URL exists in LidaShield’s confirmed or reported database.</p>
-          <input id="link-input" class="input" type="text" placeholder="https://example.com" />
-          <button class="btn" onclick="checkLink()">Check link</button>
-          <div id="link-result" class="result"></div>
-        </div>
-
-        <div class="feature-card">
-          <h3>2. Report scam link</h3>
-          <p>Users submit suspicious links. Admin review turns reports into confirmed intelligence.</p>
-          <input id="report-link-input" class="input" type="text" placeholder="Suspicious link" />
-          <textarea id="report-link-notes" class="textarea" placeholder="What happened? Example: fake DBS login page, WhatsApp scam, payment fraud..."></textarea>
-          <button class="btn" onclick="reportLink()">Submit report</button>
-          <div id="report-result" class="result"></div>
-        </div>
-
-        <div class="feature-card">
-          <h3>3. Message checker</h3>
-          <p>Paste a WhatsApp/SMS message. LidaShield checks whether this exact message is known.</p>
-          <textarea id="message-input" class="textarea" placeholder="Paste suspicious SMS or WhatsApp message..."></textarea>
-          <button class="btn" onclick="checkMessage()">Check message</button>
-          <div id="message-result" class="result"></div>
-        </div>
-
-        <div class="feature-card">
-          <h3>4. Email checker</h3>
-          <p>Paste email content. LidaShield checks whether this email text is in the database.</p>
-          <textarea id="email-input" class="textarea" placeholder="Paste suspicious email content..."></textarea>
-          <button class="btn" onclick="checkEmail()">Check email</button>
-          <div id="email-result" class="result"></div>
-        </div>
-
-        <div class="feature-card">
-          <h3>5. Phone number checker</h3>
-          <p>Checks whether a phone number exists in the scam report database.</p>
-          <input id="phone-input" class="input" type="text" placeholder="+65 8123 4567" />
-          <button class="btn" onclick="checkPhone()">Check phone</button>
-          <div id="phone-result" class="result"></div>
-        </div>
-
-        <div class="feature-card">
-          <h3>6. Business audit request</h3>
-          <p>Your first monetizable Pro feature: collect business audit leads manually.</p>
-          <input id="business-name" class="input" type="text" placeholder="Business name" />
-          <input id="business-website" class="input" type="text" placeholder="Business website" />
-          <input id="business-email" class="input" type="email" placeholder="Contact email" />
-          <button class="btn" onclick="requestAudit()">Request audit</button>
-          <div id="audit-result" class="result"></div>
-        </div>
-
-      </section>
-
-      <div class="section-title">
-        <div>
-          <h2>Plans</h2>
-          <p>Temporary plan switcher for testing. Later, replace this with payments.</p>
-        </div>
-      </div>
-
-      <section class="pricing">
-        <div class="pricing-card">
-          <h3>Free</h3>
-          <div class="price">$0</div>
-          <ul>
-            <li>10 daily checks</li>
-            <li>Link, message, email, phone checks</li>
-            <li>Submit scam reports</li>
-            <li>Basic dashboard</li>
-          </ul>
-          <button class="btn secondary" onclick="setPlan('free')">Use Free</button>
-        </div>
-
-        <div class="pricing-card highlight">
-          <h3>Plus</h3>
-          <div class="price">$4.99–$9</div>
-          <ul>
-            <li>100 daily checks</li>
-            <li>Scan history later</li>
-            <li>Safety score later</li>
-            <li>Family protection angle</li>
-          </ul>
-          <button class="btn" onclick="setPlan('plus')">Test Plus</button>
-        </div>
-
-        <div class="pricing-card">
-          <h3>Pro</h3>
-          <div class="price">$29+</div>
-          <ul>
-            <li>500 daily checks</li>
-            <li>Business audit requests</li>
-            <li>Dashboard foundation</li>
-            <li>Best first-money product</li>
-          </ul>
-          <button class="btn secondary" onclick="setPlan('pro')">Test Pro</button>
-        </div>
-      </section>
-
-      <section id="admin-panel" class="admin-panel">
-        <div class="section-title">
-          <div>
-            <h2>Admin board</h2>
-            <p>Review submitted links and turn user reports into confirmed database intelligence.</p>
-          </div>
-          <button class="btn secondary" onclick="loadAdminLinks()">Load reports</button>
-        </div>
-
-        <div class="panel" style="padding:18px;">
-          <div id="admin-list" class="admin-list"></div>
-        </div>
-      </section>
-
-    </main>
-
-    <footer>
-      <strong>LidaShield</strong> — database-backed scam intelligence for Singapore and Southeast Asia.
-      Current version: honest database verdicts only. No external API engine dependency.
-    </footer>
-
+{% extends "base.html" %}
+{% block title %}LidaShield — Scam & Threat Protection{% endblock %}
+
+{% block head %}
+<style>
+  /* ── Hero ── */
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding: 72px 24px 80px;
+    text-align: center;
+  }
+  /* CSS-only animated background — zero JS, zero lag on mobile */
+  .hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 60% 50% at 50% -10%, rgba(201,168,76,0.12) 0%, transparent 70%),
+      radial-gradient(ellipse 40% 30% at 80% 110%, rgba(201,168,76,0.06) 0%, transparent 60%);
+    pointer-events: none;
+  }
+  .hero-grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(201,168,76,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(201,168,76,0.04) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black, transparent);
+    -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black, transparent);
+  }
+  .hero-eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: var(--gold);
+    text-transform: uppercase;
+    margin-bottom: 20px;
+  }
+  .hero h1 {
+    font-family: var(--serif);
+    font-size: clamp(36px, 7vw, 72px);
+    font-weight: 300;
+    line-height: 1.08;
+    letter-spacing: -0.01em;
+    color: #fff;
+    margin-bottom: 20px;
+  }
+  .hero h1 em {
+    font-style: normal;
+    color: var(--gold);
+  }
+  .hero-sub {
+    font-size: 14px;
+    color: var(--text-muted);
+    max-width: 480px;
+    margin: 0 auto 36px;
+    line-height: 1.7;
+  }
+  .hero-cta {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .hero-stats {
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+    margin-top: 60px;
+    flex-wrap: wrap;
+  }
+  .stat-item { text-align: center; }
+  .stat-num {
+    font-family: var(--serif);
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--gold);
+    display: block;
+  }
+  .stat-label { font-size: 11px; color: var(--text-muted); letter-spacing: 0.08em; }
+
+  /* ── Scanner (hero quick-check) ── */
+  .scanner-wrap {
+    max-width: 560px;
+    margin: 40px auto 0;
+  }
+  .scanner-row {
+    display: flex;
+    gap: 8px;
+  }
+  .scanner-row .input { flex: 1; }
+
+  /* ── Features ── */
+  .section { padding: 64px 24px; max-width: 1100px; margin: 0 auto; }
+  .section-title {
+    font-family: var(--serif);
+    font-size: clamp(24px, 4vw, 36px);
+    font-weight: 300;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+  .section-sub { font-size: 13px; color: var(--text-muted); margin-bottom: 40px; }
+
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .feature-card {
+    background: var(--surface);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: background 0.2s;
+  }
+  .feature-card:hover { background: var(--surface2); }
+  .feature-icon {
+    font-size: 20px;
+    margin-bottom: 4px;
+  }
+  .feature-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .feature-desc { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+  .feature-tier { margin-top: auto; padding-top: 8px; }
+
+  /* ── Pricing ── */
+  .pricing-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    max-width: 860px;
+    margin: 0 auto;
+  }
+  .pricing-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 28px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    position: relative;
+  }
+  .pricing-card.featured {
+    border-color: var(--gold-dim);
+    background: linear-gradient(160deg, var(--surface2) 0%, rgba(201,168,76,0.04) 100%);
+  }
+  .pricing-badge {
+    position: absolute;
+    top: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--gold);
+    color: var(--black);
+    font-size: 10px;
+    font-weight: 500;
+    padding: 2px 12px;
+    border-radius: 20px;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+  }
+  .pricing-tier { font-size: 11px; color: var(--text-muted); letter-spacing: 0.12em; text-transform: uppercase; }
+  .pricing-price {
+    font-family: var(--serif);
+    font-size: 36px;
+    font-weight: 300;
+    color: #fff;
+    line-height: 1;
+  }
+  .pricing-price span { font-size: 13px; color: var(--text-muted); }
+  .pricing-features { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  .pricing-features li {
+    font-size: 12px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .pricing-features li::before { content: '—'; color: var(--gold-dim); flex-shrink: 0; }
+  .pricing-features li.on::before { content: '✓'; color: var(--gold); }
+  .pricing-features li.on { color: var(--text); }
+
+  /* ── Trust bar ── */
+  .trust-bar {
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 24px;
+    display: flex;
+    justify-content: center;
+    gap: 48px;
+    flex-wrap: wrap;
+    background: var(--surface);
+  }
+  .trust-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+  .trust-item span { color: var(--gold); font-size: 16px; }
+
+  /* ── Footer ── */
+  footer {
+    padding: 32px 24px;
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+  }
+  footer a { color: var(--text-muted); text-decoration: none; }
+  footer a:hover { color: var(--gold); }
+
+  @media (max-width: 640px) {
+    .hero { padding: 48px 16px 56px; }
+    .hero-stats { gap: 24px; }
+    .section { padding: 48px 16px; }
+    .trust-bar { gap: 24px; }
+    .scanner-row { flex-direction: column; }
+    .scanner-row .input { width: 100%; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Hero -->
+<section class="hero">
+  <div class="hero-grid"></div>
+  <div class="hero-eyebrow">Singapore's Cyber Shield</div>
+  <h1>Stay safe from<br/><em>scams & threats</em></h1>
+  <p class="hero-sub">
+    LidaShield checks URLs, SMS texts, emails, and passwords against our own threat database.
+    No guesswork — only confirmed threats.
+  </p>
+
+  {% if user %}
+    <div class="hero-cta">
+      <a href="/dashboard" class="btn btn-primary">Go to Dashboard</a>
+    </div>
+  {% else %}
+    <div class="hero-cta">
+      <a href="/login" class="btn btn-primary">
+        <svg width="16" height="16" viewBox="0 0 48 48" fill="none">
+          <path d="M43.6 20H24v8.4h11.2C33.8 33 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 2.9l6-6C34.4 6.3 29.5 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.6-8.1 19.6-20 0-1.4-.1-2.7-.4-4z" fill="#fff"/>
+        </svg>
+        Sign in with Google — it's free
+      </a>
+    </div>
+  {% endif %}
+
+  <!-- Quick URL check (no login required) -->
+  <div class="scanner-wrap">
+    <div class="scanner-row" style="margin-top:28px">
+      <input id="hero-url" class="input" type="text" placeholder="Paste a suspicious URL…" autocomplete="off" spellcheck="false"/>
+      <button class="btn btn-primary" onclick="heroCheck()">Check</button>
+    </div>
+    <div id="hero-result" class="result-box"></div>
   </div>
 
-  <script>
-    let authMode = "login";
-    let currentUser = null;
+  <div class="hero-stats">
+    <div class="stat-item">
+      <span class="stat-num" id="stat-threats">—</span>
+      <span class="stat-label">Threats in DB</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-num">3</span>
+      <span class="stat-label">Threat Feeds</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-num">0</span>
+      <span class="stat-label">False Positives</span>
+    </div>
+  </div>
+</section>
 
-    function $(id) {
-      return document.getElementById(id);
-    }
+<!-- Trust bar -->
+<div class="trust-bar">
+  <div class="trust-item"><span>🔒</span> No heuristics — confirmed threats only</div>
+  <div class="trust-item"><span>🗄️</span> Your data, your database</div>
+  <div class="trust-item"><span>🇸🇬</span> Built for Singapore & SEA</div>
+  <div class="trust-item"><span>⚡</span> Real-time lookups</div>
+</div>
 
-    function escapeHtml(value) {
-      const div = document.createElement("div");
-      div.textContent = value == null ? "" : String(value);
-      return div.innerHTML;
-    }
+<!-- Features -->
+<section class="section" id="features">
+  <div class="section-title">15 Protection Features</div>
+  <div class="section-sub">Every feature checks against our own database — zero third-party API keys.</div>
 
-    function setAuthMode(mode) {
-      authMode = mode;
+  <div class="features-grid">
+    {% set features = [
+      ('🔗', 'Scam Link Checker',       'Check any URL against our threat DB instantly.',                         'free'),
+      ('💬', 'SMS / Text Scanner',       'Paste an SMS — we extract and check all links.',                        'free'),
+      ('📧', 'Phishing Email Checker',   'Paste email content and detect phishing URLs.',                         'free'),
+      ('🔑', 'Password Breach Checker',  'SHA-1 hash checked locally — your password never leaves your device.',  'free'),
+      ('📢', 'Scam Report Database',     'Browse and submit community-verified scam reports.',                    'free'),
+      ('📷', 'QR Code Scanner',          'Upload a QR code image — we decode and check the URL.',                 'shield'),
+      ('🌐', 'Domain Age Checker',       'Look up when a domain was registered.',                                 'shield'),
+      ('🖥️', 'IP Reputation Checker',   'Check if an IP address is flagged in our DB.',                         'shield'),
+      ('📋', 'Bulk URL Scanner',         'Upload a list and scan hundreds of URLs at once.',                      'pro'),
+      ('📁', 'File / Attachment Scanner','Check file hashes against known malware signatures.',                   'pro'),
+      ('🧩', 'Browser Extension',        'Real-time protection as you browse.',                                   'shield'),
+      ('🔌', 'Developer API',            'Integrate LidaShield into your own app.',                               'pro'),
+      ('🔔', 'Real-Time Alerts',         'Email alerts when a monitored URL is flagged.',                         'shield'),
+      ('📊', 'Scan History Dashboard',   'Full history of every scan you\'ve ever run.',                          'shield'),
+      ('📄', 'Threat Intel PDF Export',  'Export scan reports as PDF for compliance.',                            'pro'),
+    ] %}
+    {% for icon, name, desc, tier in features %}
+    <div class="feature-card">
+      <div class="feature-icon">{{ icon }}</div>
+      <div class="feature-name">{{ name }}</div>
+      <div class="feature-desc">{{ desc }}</div>
+      <div class="feature-tier">
+        {% if tier == 'free' %}
+          <span class="badge badge-free">Free</span>
+        {% elif tier == 'shield' %}
+          <span class="badge badge-shield">Shield</span>
+        {% else %}
+          <span class="badge badge-pro">Pro</span>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
 
-      $("login-tab").classList.toggle("active", mode === "login");
-      $("register-tab").classList.toggle("active", mode === "register");
-      $("auth-btn").textContent = mode === "login" ? "Login" : "Create account";
+<!-- Pricing -->
+<section class="section" id="pricing" style="padding-top:0">
+  <div class="section-title">Simple Pricing</div>
+  <div class="section-sub">Cancel anytime. No hidden fees.</div>
 
-      $("auth-notice").style.display = "none";
-      $("auth-notice").textContent = "";
-    }
+  <div class="pricing-grid">
+    <!-- Free -->
+    <div class="pricing-card">
+      <div class="pricing-tier">Free</div>
+      <div class="pricing-price">$0<span>/mo</span></div>
+      <ul class="pricing-features">
+        <li class="on">URL checker — 10/day</li>
+        <li class="on">SMS scanner — 5/day</li>
+        <li class="on">Email checker — 3/day</li>
+        <li class="on">Password check — 5/day</li>
+        <li class="on">Scam report browser</li>
+        <li>Dashboard & history</li>
+        <li>Browser extension</li>
+        <li>Alerts</li>
+      </ul>
+      <a href="/login" class="btn btn-ghost" style="width:100%;margin-top:auto">Get Started Free</a>
+    </div>
 
-    function showNotice(id, message) {
-      const el = $(id);
-      el.textContent = message;
-      el.style.display = "block";
-    }
+    <!-- Shield -->
+    <div class="pricing-card featured">
+      <div class="pricing-badge">Most Popular</div>
+      <div class="pricing-tier">Shield</div>
+      <div class="pricing-price">$9.90<span>/mo</span></div>
+      <ul class="pricing-features">
+        <li class="on">Everything in Free</li>
+        <li class="on">500 scans/day per feature</li>
+        <li class="on">Dashboard & scan history</li>
+        <li class="on">QR code scanner</li>
+        <li class="on">Domain age checker</li>
+        <li class="on">Browser extension</li>
+        <li class="on">Email alerts</li>
+        <li>Bulk scanner</li>
+        <li>File scanner</li>
+        <li>Developer API</li>
+      </ul>
+      <button class="btn btn-primary" style="width:100%;margin-top:auto"
+              onclick="subscribe('shield')">Upgrade to Shield</button>
+    </div>
 
-    async function api(path, options = {}) {
-      const res = await fetch(path, {
-        credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/json",
-          ...(options.headers || {})
-        },
-        ...options
-      });
+    <!-- Pro -->
+    <div class="pricing-card">
+      <div class="pricing-tier">Pro</div>
+      <div class="pricing-price">$29.90<span>/mo</span></div>
+      <ul class="pricing-features">
+        <li class="on">Everything in Shield</li>
+        <li class="on">Unlimited scans</li>
+        <li class="on">Bulk URL scanner</li>
+        <li class="on">File / attachment scanner</li>
+        <li class="on">Developer API access</li>
+        <li class="on">PDF threat reports</li>
+        <li class="on">Priority support</li>
+      </ul>
+      <button class="btn btn-ghost" style="width:100%;margin-top:auto"
+              onclick="subscribe('pro')">Upgrade to Pro</button>
+    </div>
+  </div>
+</section>
 
-      const data = await res.json().catch(() => ({}));
+<!-- Footer -->
+<footer>
+  <div style="margin-bottom:8px">
+    <a href="/">LidaShield</a> &nbsp;·&nbsp;
+    <a href="/#features">Features</a> &nbsp;·&nbsp;
+    <a href="/#pricing">Pricing</a> &nbsp;·&nbsp;
+    <a href="/login">Login</a>
+  </div>
+  © 2024 LidaShield. Built in Singapore.
+</footer>
+{% endblock %}
 
-      if (!res.ok) {
-        throw new Error(data.error || "Request failed.");
-      }
+{% block scripts %}
+<script>
+  // Load threat count
+  fetch('/api/reports').then(r => r.json()).then(() => {
+    // Placeholder — replace with a /api/stats endpoint if you add one
+  });
 
-      return data;
-    }
+  // Hero URL check
+  async function heroCheck() {
+    const input = document.getElementById('hero-url');
+    const url   = input.value.trim();
+    const box   = document.getElementById('hero-result');
+    if (!url) return;
 
-    async function submitAuth() {
-      const email = $("auth-email").value.trim();
-      const password = $("auth-password").value;
+    box.style.display = 'block';
+    box.className = 'result-box result-unknown';
+    box.textContent = 'Checking…';
 
-      if (!email || !password) {
-        showNotice("auth-notice", "Enter your email and password.");
+    try {
+      const data = await api('/api/check-url', { url });
+      if (data.error && data.upgrade) {
+        box.className = 'result-box result-unknown';
+        box.innerHTML = '⚠ Daily limit reached — <a href="/login" style="color:inherit">sign in</a> for more scans.';
         return;
       }
-
-      try {
-        const path = authMode === "login" ? "/api/login" : "/api/register";
-
-        const data = await api(path, {
-          method: "POST",
-          body: JSON.stringify({ email, password })
-        });
-
-        currentUser = data.user;
-        enterApp();
-      } catch (err) {
-        showNotice("auth-notice", err.message);
+      if (data.result === 'threat') {
+        box.className = 'result-box result-threat';
+        box.textContent = `⚠ Threat detected: ${data.threat_type} (source: ${data.source})`;
+      } else {
+        box.className = 'result-box result-safe';
+        box.textContent = '✓ Not found in our threat database.';
       }
+    } catch {
+      box.className = 'result-box result-unknown';
+      box.textContent = 'Error — please try again.';
     }
+  }
 
-    async function checkSession() {
-      try {
-        const data = await api("/api/me");
-        if (data.logged_in) {
-          currentUser = data.user;
-          enterApp();
-        }
-      } catch (err) {}
-    }
+  document.getElementById('hero-url').addEventListener('keydown', e => {
+    if (e.key === 'Enter') heroCheck();
+  });
 
-    function enterApp() {
-      $("auth-card").style.display = "none";
-      $("main-app").style.display = "block";
-      $("logout-btn").style.display = "inline-block";
-
-      $("user-pill").textContent = `${currentUser.email} · ${currentUser.plan.toUpperCase()}`;
-
-      if (currentUser.is_admin) {
-        $("admin-panel").style.display = "block";
-      }
-
-      loadDashboard();
-    }
-
-    async function logout() {
-      try {
-        await api("/api/logout", { method: "POST" });
-      } catch (err) {}
-
-      currentUser = null;
-      $("auth-card").style.display = "block";
-      $("main-app").style.display = "none";
-      $("logout-btn").style.display = "none";
-      $("admin-panel").style.display = "none";
-      $("user-pill").textContent = "Not logged in";
-    }
-
-    function renderResult(id, data) {
-      const el = $(id);
-      const cls = data.verdict_class || "unknown";
-
-      el.className = `result ${cls}`;
-      el.style.display = "block";
-
-      el.innerHTML = `
-        <div class="result-title">${escapeHtml(data.verdict || "Result")}</div>
-        <div class="result-msg">${escapeHtml(data.message || "No message.")}</div>
-        <div class="result-meta">
-          Source: ${escapeHtml(data.source || "LidaShield database")}
-          ${data.remaining !== undefined ? `<br>Remaining today: ${escapeHtml(data.remaining)}` : ""}
-          ${data.report_count !== undefined ? `<br>Report count: ${escapeHtml(data.report_count)}` : ""}
-          ${data.normalized ? `<br>Record key: ${escapeHtml(data.normalized)}` : ""}
-        </div>
-      `;
-    }
-
-    function renderError(id, message) {
-      renderResult(id, {
-        verdict: "ERROR",
-        verdict_class: "danger",
-        message
-      });
-    }
-
-    async function checkLink() {
-      const url = $("link-input").value.trim();
-
-      if (!url) {
-        renderError("link-result", "Enter a link.");
-        return;
-      }
-
-      try {
-        const data = await api("/api/check/link", {
-          method: "POST",
-          body: JSON.stringify({ url })
-        });
-        renderResult("link-result", data);
-        loadDashboard();
-      } catch (err) {
-        renderError("link-result", err.message);
-      }
-    }
-
-    async function reportLink() {
-      const url = $("report-link-input").value.trim();
-      const notes = $("report-link-notes").value.trim();
-
-      if (!url) {
-        renderError("report-result", "Enter a link to report.");
-        return;
-      }
-
-      try {
-        const data = await api("/api/report/link", {
-          method: "POST",
-          body: JSON.stringify({ url, notes })
-        });
-
-        renderResult("report-result", {
-          verdict: "REPORT SUBMITTED",
-          verdict_class: "warning",
-          message: data.message,
-          source: "LidaShield report database"
-        });
-
-        loadDashboard();
-      } catch (err) {
-        renderError("report-result", err.message);
-      }
-    }
-
-    async function checkMessage() {
-      const message = $("message-input").value.trim();
-
-      if (!message) {
-        renderError("message-result", "Paste a message.");
-        return;
-      }
-
-      try {
-        const data = await api("/api/check/message", {
-          method: "POST",
-          body: JSON.stringify({ message })
-        });
-        renderResult("message-result", data);
-        loadDashboard();
-      } catch (err) {
-        renderError("message-result", err.message);
-      }
-    }
-
-    async function checkEmail() {
-      const email_text = $("email-input").value.trim();
-
-      if (!email_text) {
-        renderError("email-result", "Paste email content.");
-        return;
-      }
-
-      try {
-        const data = await api("/api/check/email", {
-          method: "POST",
-          body: JSON.stringify({ email_text })
-        });
-        renderResult("email-result", data);
-        loadDashboard();
-      } catch (err) {
-        renderError("email-result", err.message);
-      }
-    }
-
-    async function checkPhone() {
-      const phone = $("phone-input").value.trim();
-
-      if (!phone) {
-        renderError("phone-result", "Enter a phone number.");
-        return;
-      }
-
-      try {
-        const data = await api("/api/check/phone", {
-          method: "POST",
-          body: JSON.stringify({ phone })
-        });
-        renderResult("phone-result", data);
-        loadDashboard();
-      } catch (err) {
-        renderError("phone-result", err.message);
-      }
-    }
-
-    async function requestAudit() {
-      const business_name = $("business-name").value.trim();
-      const website = $("business-website").value.trim();
-      const contact_email = $("business-email").value.trim();
-
-      if (!business_name || !website) {
-        renderError("audit-result", "Business name and website are required.");
-        return;
-      }
-
-      try {
-        const data = await api("/api/business-audit", {
-          method: "POST",
-          body: JSON.stringify({ business_name, website, contact_email })
-        });
-
-        renderResult("audit-result", {
-          verdict: "AUDIT REQUESTED",
-          verdict_class: "safe",
-          message: data.message,
-          source: "LidaShield Pro pipeline",
-          remaining: data.remaining
-        });
-
-        loadDashboard();
-      } catch (err) {
-        renderError("audit-result", err.message);
-      }
-    }
-
-    async function loadDashboard() {
-      try {
-        const data = await api("/api/dashboard");
-
-        $("dash-plan").textContent = data.user.plan.toUpperCase();
-        $("dash-limit").textContent = data.user.daily_limit;
-        $("dash-records").textContent = data.database.total_link_records;
-        $("dash-confirmed").textContent = data.database.confirmed_scam_links;
-
-        $("user-pill").textContent = `${data.user.email} · ${data.user.plan.toUpperCase()}`;
-
-        currentUser = data.user;
-
-        if (data.user.is_admin) {
-          $("admin-panel").style.display = "block";
-        }
-      } catch (err) {}
-    }
-
-    async function setPlan(plan) {
-      try {
-        await api("/api/dev/set-plan", {
-          method: "POST",
-          body: JSON.stringify({ plan })
-        });
-
-        await loadDashboard();
-
-        alert(`Plan changed to ${plan.toUpperCase()} for testing.`);
-      } catch (err) {
-        alert(err.message);
-      }
-    }
-
-    async function loadAdminLinks() {
-      const list = $("admin-list");
-      list.innerHTML = "Loading...";
-
-      try {
-        const rows = await api("/api/admin/links");
-
-        if (!rows.length) {
-          list.innerHTML = `<div class="admin-item">No reports yet.</div>`;
-          return;
-        }
-
-        list.innerHTML = rows.map(row => `
-          <div class="admin-item">
-            <strong>${escapeHtml(row.original_url)}</strong>
-            <div class="result-meta">
-              Status: ${escapeHtml(row.status)}<br>
-              Reports: ${escapeHtml(row.report_count)}<br>
-              Notes: ${escapeHtml(row.notes || "No notes")}
-            </div>
-            <div class="admin-actions">
-              <button class="btn" onclick="adminUpdateLink(${row.id}, 'confirmed_scam')">Confirm scam</button>
-              <button class="btn secondary" onclick="adminUpdateLink(${row.id}, 'confirmed_safe')">Mark safe</button>
-              <button class="btn secondary" onclick="adminUpdateLink(${row.id}, 'rejected')">Reject</button>
-            </div>
-          </div>
-        `).join("");
-      } catch (err) {
-        list.innerHTML = `<div class="admin-item">${escapeHtml(err.message)}</div>`;
-      }
-    }
-
-    async function adminUpdateLink(id, status) {
-      try {
-        await api(`/api/admin/link/${id}`, {
-          method: "POST",
-          body: JSON.stringify({
-            status,
-            notes: `Updated from admin board to ${status}`
-          })
-        });
-
-        await loadAdminLinks();
-        await loadDashboard();
-      } catch (err) {
-        alert(err.message);
-      }
-    }
-
-    checkSession();
-  </script>
-</body>
-</html>
+  // Stripe subscribe
+  async function subscribe(tier) {
+    {% if user %}
+      const data = await api('/stripe/create-checkout', { tier });
+      if (data.url) window.location.href = data.url;
+      else toast(data.error || 'Error', 'error');
+    {% else %}
+      window.location.href = '/login';
+    {% endif %}
+  }
+</script>
+{% endblock %}
