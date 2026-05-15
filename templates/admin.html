@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}Admin — LidaShield{% endblock %}
+
+{% block head %}
+<style>
+  .admin-wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px; }
+  .admin-title {
+    font-family: var(--serif);
+    font-size: 24px;
+    font-weight: 300;
+    color: #fff;
+    margin-bottom: 24px;
+  }
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+  .stat-card { padding: 18px; }
+  .stat-card-num {
+    font-family: var(--serif);
+    font-size: 32px;
+    color: var(--gold);
+  }
+  .stat-card-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 4px;
+  }
+  .section-head {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 12px;
+    margin-top: 28px;
+  }
+  .action-btns { display: flex; gap: 6px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-wrap">
+  <div class="admin-title">Admin Panel</div>
+
+  <!-- Stats -->
+  <div class="stats-row">
+    <div class="card stat-card">
+      <div class="stat-card-num">{{ total_users }}</div>
+      <div class="stat-card-label">Total Users</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-card-num">{{ "{:,}".format(total_threats) }}</div>
+      <div class="stat-card-label">Threats in DB</div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-card-num" style="color:{% if pending > 0 %}#F39C12{% else %}var(--gold){% endif %}">{{ pending }}</div>
+      <div class="stat-card-label">Pending Reports</div>
+    </div>
+    {% for row in threat_sources %}
+    <div class="card stat-card">
+      <div class="stat-card-num">{{ "{:,}".format(row.n) }}</div>
+      <div class="stat-card-label">{{ row.source }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Pending Reports -->
+  {% if reports %}
+  <div class="section-head">Pending Reports ({{ reports | length }})</div>
+  <div class="card" style="padding:0;overflow:hidden;margin-bottom:24px">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Type</th>
+            <th>Value</th>
+            <th>Description</th>
+            <th>Reporter</th>
+            <th>Date</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in reports %}
+          <tr id="report-row-{{ r.id }}">
+            <td>#{{ r.id }}</td>
+            <td><span class="badge badge-free">{{ r.report_type }}</span></td>
+            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.value }}</td>
+            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-muted)">{{ r.description or '—' }}</td>
+            <td style="color:var(--text-muted)">{{ r.reporter_email or 'anon' }}</td>
+            <td style="white-space:nowrap;color:var(--text-muted)">{{ r.created_at.strftime('%d %b %H:%M') if r.created_at else '' }}</td>
+            <td>
+              <div class="action-btns">
+                <button class="btn btn-success btn-sm" onclick="verifyReport({{ r.id }})">Verify</button>
+                <button class="btn btn-danger btn-sm" onclick="rejectReport({{ r.id }})">Reject</button>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="section-head">Pending Reports</div>
+  <div class="card" style="padding:28px;text-align:center;color:var(--text-muted);font-size:12px">
+    No pending reports.
+  </div>
+  {% endif %}
+
+  <!-- Users -->
+  <div class="section-head">Users ({{ users | length }} shown)</div>
+  <div class="card" style="padding:0;overflow:hidden">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Email</th>
+            <th>Name</th>
+            <th>Tier</th>
+            <th>Scans</th>
+            <th>Joined</th>
+            <th>Set Tier</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+          <tr>
+            <td style="color:var(--text-muted)">#{{ u.id }}</td>
+            <td>{{ u.email }}</td>
+            <td style="color:var(--text-muted)">{{ u.name or '—' }}</td>
+            <td><span class="badge badge-{{ u.tier }}" id="tier-badge-{{ u.id }}">{{ u.tier }}</span></td>
+            <td>{{ u.total_scans }}</td>
+            <td style="color:var(--text-muted);white-space:nowrap">{{ u.created_at.strftime('%d %b %Y') if u.created_at else '—' }}</td>
+            <td>
+              <select class="input" style="padding:4px 8px;font-size:11px;width:90px"
+                      onchange="setTier({{ u.id }}, this.value, this)">
+                <option value="free"   {% if u.tier == 'free'   %}selected{% endif %}>Free</option>
+                <option value="shield" {% if u.tier == 'shield' %}selected{% endif %}>Shield</option>
+                <option value="pro"    {% if u.tier == 'pro'    %}selected{% endif %}>Pro</option>
+              </select>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  async function verifyReport(id) {
+    const r = await api(`/admin/reports/${id}/verify`, {});
+    if (r.success) {
+      document.getElementById(`report-row-${id}`)?.remove();
+      toast('Report verified & added to threat DB');
+    } else toast(r.error || 'Error', 'error');
+  }
+
+  async function rejectReport(id) {
+    const r = await api(`/admin/reports/${id}/reject`, {});
+    if (r.success) {
+      document.getElementById(`report-row-${id}`)?.remove();
+      toast('Report rejected');
+    } else toast(r.error || 'Error', 'error');
+  }
+
+  async function setTier(uid, tier, select) {
+    const r = await api(`/admin/users/${uid}/tier`, { tier });
+    if (r.success) {
+      const badge = document.getElementById(`tier-badge-${uid}`);
+      if (badge) {
+        badge.textContent = tier;
+        badge.className   = `badge badge-${tier}`;
+      }
+      toast(`User #${uid} → ${tier}`);
+    } else {
+      toast(r.error || 'Error', 'error');
+      select.value = select.dataset.prev || 'free';
+    }
+    select.dataset.prev = tier;
+  }
+</script>
+{% endblock %}
