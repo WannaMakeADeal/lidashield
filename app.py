@@ -1,754 +1,661 @@
 import os
-import sqlite3
 import hashlib
-from datetime import date, datetime
-from functools import wraps
-from flask import Flask, request, jsonify, session, redirect
+import re
+from datetime import date
+from urllib.parse import urlparse
 
-from werkzeug.security import generate_password_hash, check_password_hash
+import psycopg2
+import psycopg2.extras
+import stripe
+from authlib.integrations.flask_client import OAuth
+from flask import (Flask, jsonify, redirect, render_template,
+                   request, session, url_for)
 
+# ---------------------------------------------------------------------------
+# App setup
+# ---------------------------------------------------------------------------
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "change-this-secret-key")
+app.secret_key = os.environ.get('SECRET_KEY', 'change-this-in-production')
 
-DB_PATH = os.environ.get("DB_PATH", "lidashield.db")
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
+if DATABASE_URL.startswith('postgres://'):          # Render gives postgres:// but psycopg2 needs postgresql://
+    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
 
-PLAN_LIMITS = {
-    "free": 10,
-    "plus": 100,
-    "pro": 500,
+stripe.api_key = os.environ.get('STRIPE_SECRET_KEY', '')
+STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
+STRIPE_PRICE_SHIELD = os.environ.get('STRIPE_PRICE_SHIELD', '')
+STRIPE_PRICE_PRO    = os.environ.get('STRIPE_PRICE_PRO', '')
+
+PRICE_IDS = {'shield': STRIPE_PRICE_SHIELD, 'pro': STRIPE_PRICE_PRO}
+
+# ---------------------------------------------------------------------------
+# Tier limits  (feature_key: scans/day)
+# ---------------------------------------------------------------------------
+DAILY_LIMITS = {
+    'free':   {'url_check': 10, 'sms_scan': 5,   'email_check': 3,   'password_check': 5,   'report_submit': 3},
+    'shield': {'url_check': 500,'sms_scan': 500,  'email_check': 500, 'password_check': 500, 'report_submit': 50},
+    'pro':    {'url_check': 0,  'sms_scan': 0,    'email_check': 0,   'password_check': 0,   'report_submit': 0},
+    # 0 = unlimited
 }
 
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "").lower().strip()
+TIER_FEATURES = {
+    'free':   ['url_check', 'sms_scan', 'email_check', 'password_check', 'report_submit'],
+    'shield': ['url_check', 'sms_scan', 'email_check', 'password_check', 'report_submit',
+               'qr_scan', 'domain_check', 'ip_check', 'bulk_scan', 'history', 'alerts'],
+    'pro':    ['url_check', 'sms_scan', 'email_check', 'password_check', 'report_submit',
+               'qr_scan', 'domain_check', 'ip_check', 'bulk_scan', 'history', 'alerts',
+               'file_scan', 'api_access', 'pdf_export'],
+}
+
+# ---------------------------------------------------------------------------
+# OAuth
+# ---------------------------------------------------------------------------
+oauth = OAuth(app)
+google = oauth.register(
+    name='google',
+    client_id=os.environ.get('GOOGLE_CLIENT_ID', ''),
+    client_secret=os.environ.get('GOOGLE_CLIENT_SECRET', ''),
+    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+    client_kwargs={'scope': 'openid email profile'},
+)
+
+# ---------------------------------------------------------------------------
+# DB helpers
+# ---------------------------------------------------------------------------
+def get_db():
+    return psycopg2.connect(DATABASE_URL)
 
 
-# ─────────────────────────────────────────────
-# Database
-# ─────────────────────────────────────────────
-
-def db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db():
-    conn = db()
-    cur = conn.cursor()
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        plan TEXT NOT NULL DEFAULT 'free',
-        is_admin INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS usage_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        feature TEXT NOT NULL,
-        used_on TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY(user_id) REFERENCES users(id)
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS link_records (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        normalized_url TEXT UNIQUE NOT NULL,
-        original_url TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        source TEXT NOT NULL DEFAULT 'user_report',
-        report_count INTEGER NOT NULL DEFAULT 1,
-        notes TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS phone_records (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        phone_number TEXT UNIQUE NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        source TEXT NOT NULL DEFAULT 'user_report',
-        report_count INTEGER NOT NULL DEFAULT 1,
-        notes TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS message_records (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        message_hash TEXT UNIQUE NOT NULL,
-        message_text TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        source TEXT NOT NULL DEFAULT 'user_report',
-        report_count INTEGER NOT NULL DEFAULT 1,
-        notes TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS email_records (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email_hash TEXT UNIQUE NOT NULL,
-        email_text TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        source TEXT NOT NULL DEFAULT 'user_report',
-        report_count INTEGER NOT NULL DEFAULT 1,
-        notes TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS business_audits (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        business_name TEXT NOT NULL,
-        website TEXT NOT NULL,
-        contact_email TEXT,
-        status TEXT NOT NULL DEFAULT 'requested',
-        created_at TEXT NOT NULL,
-        FOREIGN KEY(user_id) REFERENCES users(id)
-    )
-    """)
-
-    conn.commit()
-    conn.close()
-
-
-def now():
-    return datetime.utcnow().isoformat()
-
-
-def normalize_url(raw):
-    raw = (raw or "").strip().lower()
-    raw = raw.replace("http://", "").replace("https://", "")
-    raw = raw.split("#")[0].strip("/")
-    return raw
-
-
-def hash_text(text):
-    return hashlib.sha256((text or "").strip().lower().encode()).hexdigest()
-
-
-init_db()
-
-
-# ─────────────────────────────────────────────
-# Auth helpers
-# ─────────────────────────────────────────────
-
-def current_user():
-    user_id = session.get("user_id")
-    if not user_id:
+def get_user():
+    uid = session.get('user_id')
+    if not uid:
         return None
-
-    conn = db()
-    user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT * FROM users WHERE id = %s', (uid,))
+    user = cur.fetchone()
     conn.close()
     return user
 
 
-def require_login(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        if not current_user():
-            return jsonify({"error": "Please log in first."}), 401
-        return fn(*args, **kwargs)
-    return wrapper
-
-
-def require_admin(fn):
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        user = current_user()
-        if not user or not user["is_admin"]:
-            return jsonify({"error": "Admin access required."}), 403
-        return fn(*args, **kwargs)
-    return wrapper
-
-
-# ─────────────────────────────────────────────
-# Usage limits
-# ─────────────────────────────────────────────
-
-def check_usage_limit(user_id, feature):
-    conn = db()
-    user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-
+def is_admin(user):
     if not user:
+        return False
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('SELECT 1 FROM admins WHERE user_id = %s', (user['id'],))
+    result = cur.fetchone()
+    conn.close()
+    return result is not None
+
+# ---------------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------------
+def check_rate_limit(user, feature):
+    """Returns (allowed: bool, remaining: int, limit: int)."""
+    tier  = user['tier'] if user else 'free'
+    limit = DAILY_LIMITS[tier].get(feature, 10)
+    today = date.today()
+
+    conn = get_db()
+    cur  = conn.cursor()
+
+    if user:
+        cur.execute(
+            'SELECT count FROM scan_usage WHERE user_id=%s AND feature=%s AND scan_date=%s',
+            (user['id'], feature, today)
+        )
+    else:
+        cur.execute(
+            'SELECT count FROM scan_usage WHERE ip_address=%s AND feature=%s AND scan_date=%s',
+            (request.remote_addr, feature, today)
+        )
+
+    row     = cur.fetchone()
+    current = row[0] if row else 0
+
+    if limit != 0 and current >= limit:
         conn.close()
-        return False, 0, "User not found."
+        return False, 0, limit
 
-    plan = user["plan"]
-    limit = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
-
-    today = str(date.today())
-
-    used = conn.execute("""
-        SELECT COUNT(*) AS count
-        FROM usage_logs
-        WHERE user_id = ? AND feature = ? AND used_on = ?
-    """, (user_id, feature, today)).fetchone()["count"]
-
-    if used >= limit:
-        conn.close()
-        return False, 0, f"You have used all {limit} daily {feature} checks for your {plan.title()} plan."
-
-    conn.execute("""
-        INSERT INTO usage_logs (user_id, feature, used_on, created_at)
-        VALUES (?, ?, ?, ?)
-    """, (user_id, feature, today, now()))
+    # Increment
+    if row:
+        if user:
+            cur.execute(
+                'UPDATE scan_usage SET count=count+1 WHERE user_id=%s AND feature=%s AND scan_date=%s',
+                (user['id'], feature, today)
+            )
+        else:
+            cur.execute(
+                'UPDATE scan_usage SET count=count+1 WHERE ip_address=%s AND feature=%s AND scan_date=%s',
+                (request.remote_addr, feature, today)
+            )
+    else:
+        if user:
+            cur.execute(
+                'INSERT INTO scan_usage(user_id,feature,scan_date,count) VALUES(%s,%s,%s,1)',
+                (user['id'], feature, today)
+            )
+        else:
+            cur.execute(
+                'INSERT INTO scan_usage(ip_address,feature,scan_date,count) VALUES(%s,%s,%s,1)',
+                (request.remote_addr, feature, today)
+            )
 
     conn.commit()
     conn.close()
+    remaining = (limit - current - 1) if limit != 0 else 999999
+    return True, remaining, limit
 
-    return True, limit - used - 1, None
-
-
-# ─────────────────────────────────────────────
-# Verdict builder — no heuristics
-# ─────────────────────────────────────────────
-
-def verdict_from_status(status, report_count=0):
-    if status == "confirmed_scam":
-        return {
-            "verdict": "DANGEROUS",
-            "verdict_class": "danger",
-            "message": "This item exists in the LidaShield confirmed scam database. Do not proceed."
-        }
-
-    if status == "confirmed_safe":
-        return {
-            "verdict": "KNOWN SAFE",
-            "verdict_class": "safe",
-            "message": "This item has been reviewed and marked safe in the LidaShield database."
-        }
-
-    if status == "pending":
-        return {
-            "verdict": "REPORTED",
-            "verdict_class": "warning",
-            "message": f"This item has been reported {report_count} time(s), but has not been admin-confirmed yet."
-        }
-
-    return {
-        "verdict": "UNKNOWN",
-        "verdict_class": "unknown",
-        "message": "LidaShield has no confirmed record for this item yet."
-    }
+# ---------------------------------------------------------------------------
+# Threat lookup — strict DB only, zero heuristics
+# ---------------------------------------------------------------------------
+URL_RE = re.compile(
+    r'(?:https?://|www\.)[^\s<>"\']+|[a-zA-Z0-9\-]+\.[a-zA-Z]{2,}(?:/[^\s<>"\']*)?'
+)
 
 
-# ─────────────────────────────────────────────
-# Page
-# ─────────────────────────────────────────────
-
-@app.route("/")
-def home():
-    with open(os.path.join(os.path.dirname(__file__), "index.html"), "r", encoding="utf-8") as f:
-        return f.read()
-
-
-# ─────────────────────────────────────────────
-# Auth routes
-# ─────────────────────────────────────────────
-
-@app.route("/api/register", methods=["POST"])
-def register():
-    data = request.get_json() or {}
-    email = (data.get("email") or "").lower().strip()
-    password = data.get("password") or ""
-
-    if not email or "@" not in email:
-        return jsonify({"error": "Enter a valid email."}), 400
-
-    if len(password) < 8:
-        return jsonify({"error": "Password must be at least 8 characters."}), 400
-
-    is_admin = 1 if ADMIN_EMAIL and email == ADMIN_EMAIL else 0
-
-    try:
-        conn = db()
-        conn.execute("""
-            INSERT INTO users (email, password_hash, plan, is_admin, created_at)
-            VALUES (?, ?, 'free', ?, ?)
-        """, (email, generate_password_hash(password), is_admin, now()))
-        conn.commit()
-        user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-        conn.close()
-
-        session["user_id"] = user["id"]
-
-        return jsonify({
-            "message": "Account created.",
-            "user": {
-                "email": user["email"],
-                "plan": user["plan"],
-                "is_admin": bool(user["is_admin"])
-            }
-        })
-
-    except sqlite3.IntegrityError:
-        return jsonify({"error": "This email is already registered."}), 409
+def normalize_url(raw: str) -> str:
+    raw = raw.strip().lower()
+    if not raw.startswith(('http://', 'https://')):
+        raw = 'http://' + raw
+    p = urlparse(raw)
+    path = p.path.rstrip('/')
+    return (p.netloc + path).lstrip('/')
 
 
-@app.route("/api/login", methods=["POST"])
-def login():
-    data = request.get_json() or {}
-    email = (data.get("email") or "").lower().strip()
-    password = data.get("password") or ""
+def url_hash(normalised: str) -> str:
+    return hashlib.sha256(normalised.encode()).hexdigest()
 
-    conn = db()
-    user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+
+def lookup_url(raw: str):
+    """
+    Strict DB lookup. Returns threat row dict or None.
+    No heuristics — ever.
+    """
+    norm   = normalize_url(raw)
+    uhash  = url_hash(norm)
+    domain = urlparse('http://' + norm).netloc
+
+    conn = get_db()
+    cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    # Exact URL hash first
+    cur.execute('SELECT * FROM threats WHERE url_hash=%s LIMIT 1', (uhash,))
+    row = cur.fetchone()
+
+    # Fall back to domain match
+    if not row and domain:
+        cur.execute('SELECT * FROM threats WHERE domain=%s LIMIT 1', (domain,))
+        row = cur.fetchone()
+
+    conn.close()
+    return dict(row) if row else None
+
+
+def save_history(user, feature, value, result, threat_type=None):
+    if not user:
+        return
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute(
+        'INSERT INTO scan_history(user_id,feature,input_value,result,threat_type) VALUES(%s,%s,%s,%s,%s)',
+        (user['id'], feature, value[:500] if value else None, result, threat_type)
+    )
+    conn.commit()
     conn.close()
 
-    if not user or not check_password_hash(user["password_hash"], password):
-        return jsonify({"error": "Invalid email or password."}), 401
-
-    session["user_id"] = user["id"]
-
-    return jsonify({
-        "message": "Logged in.",
-        "user": {
-            "email": user["email"],
-            "plan": user["plan"],
-            "is_admin": bool(user["is_admin"])
-        }
-    })
+# ---------------------------------------------------------------------------
+# Auth routes
+# ---------------------------------------------------------------------------
+@app.route('/login')
+def login():
+    redirect_uri = url_for('auth_callback', _external=True)
+    return google.authorize_redirect(redirect_uri)
 
 
-@app.route("/api/logout", methods=["POST"])
+@app.route('/auth/callback')
+def auth_callback():
+    token    = google.authorize_access_token()
+    userinfo = token['userinfo']
+
+    conn = get_db()
+    cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        INSERT INTO users(google_id, email, name, avatar_url)
+        VALUES(%s,%s,%s,%s)
+        ON CONFLICT(google_id) DO UPDATE
+            SET name=EXCLUDED.name, avatar_url=EXCLUDED.avatar_url
+        RETURNING id
+    """, (userinfo['sub'], userinfo['email'], userinfo['name'], userinfo.get('picture', '')))
+    row = cur.fetchone()
+    conn.commit()
+    conn.close()
+
+    session['user_id'] = row['id']
+    return redirect(url_for('dashboard'))
+
+
+@app.route('/logout')
 def logout():
     session.clear()
-    return jsonify({"message": "Logged out."})
+    return redirect('/')
 
+# ---------------------------------------------------------------------------
+# Pages
+# ---------------------------------------------------------------------------
+@app.route('/')
+def index():
+    user = get_user()
+    return render_template('index.html', user=user)
 
-@app.route("/api/me")
-def me():
-    user = current_user()
 
-    if not user:
-        return jsonify({"logged_in": False})
-
-    return jsonify({
-        "logged_in": True,
-        "user": {
-            "email": user["email"],
-            "plan": user["plan"],
-            "is_admin": bool(user["is_admin"])
-        }
-    })
-
-
-# ─────────────────────────────────────────────
-# Feature 1: Link checker
-# ─────────────────────────────────────────────
-
-@app.route("/api/check/link", methods=["POST"])
-@require_login
-def check_link():
-    user = current_user()
-    allowed, remaining, error = check_usage_limit(user["id"], "link")
-
-    if not allowed:
-        return jsonify({
-            "error": error,
-            "rate_limited": True,
-            "remaining": 0
-        }), 429
-
-    data = request.get_json() or {}
-    url = data.get("url", "").strip()
-
-    if not url:
-        return jsonify({"error": "Enter a link."}), 400
-
-    normalized = normalize_url(url)
-
-    conn = db()
-    record = conn.execute("""
-        SELECT * FROM link_records
-        WHERE normalized_url = ?
-    """, (normalized,)).fetchone()
-    conn.close()
-
-    if record:
-        verdict = verdict_from_status(record["status"], record["report_count"])
-        verdict.update({
-            "type": "link",
-            "input": url,
-            "normalized": normalized,
-            "source": "LidaShield database",
-            "report_count": record["report_count"],
-            "remaining": remaining
-        })
-        return jsonify(verdict)
-
-    verdict = verdict_from_status("unknown")
-    verdict.update({
-        "type": "link",
-        "input": url,
-        "normalized": normalized,
-        "source": "LidaShield database",
-        "report_count": 0,
-        "remaining": remaining
-    })
-    return jsonify(verdict)
-
-
-@app.route("/api/report/link", methods=["POST"])
-@require_login
-def report_link():
-    data = request.get_json() or {}
-    url = data.get("url", "").strip()
-    notes = data.get("notes", "").strip()
-
-    if not url:
-        return jsonify({"error": "Enter a link to report."}), 400
-
-    normalized = normalize_url(url)
-
-    conn = db()
-    existing = conn.execute("""
-        SELECT * FROM link_records
-        WHERE normalized_url = ?
-    """, (normalized,)).fetchone()
-
-    if existing:
-        conn.execute("""
-            UPDATE link_records
-            SET report_count = report_count + 1,
-                notes = COALESCE(notes, '') || ?,
-                updated_at = ?
-            WHERE normalized_url = ?
-        """, (f"\nUser report: {notes}", now(), normalized))
-    else:
-        conn.execute("""
-            INSERT INTO link_records
-            (normalized_url, original_url, status, source, report_count, notes, created_at, updated_at)
-            VALUES (?, ?, 'pending', 'user_report', 1, ?, ?, ?)
-        """, (normalized, url, notes, now(), now()))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({"message": "Report submitted. Admin review needed before it becomes confirmed."})
-
-
-# ─────────────────────────────────────────────
-# Feature 2: Phone checker
-# ─────────────────────────────────────────────
-
-@app.route("/api/check/phone", methods=["POST"])
-@require_login
-def check_phone():
-    user = current_user()
-    allowed, remaining, error = check_usage_limit(user["id"], "phone")
-
-    if not allowed:
-        return jsonify({"error": error, "rate_limited": True, "remaining": 0}), 429
-
-    data = request.get_json() or {}
-    phone = data.get("phone", "").strip()
-
-    if not phone:
-        return jsonify({"error": "Enter a phone number."}), 400
-
-    conn = db()
-    record = conn.execute("""
-        SELECT * FROM phone_records
-        WHERE phone_number = ?
-    """, (phone,)).fetchone()
-    conn.close()
-
-    if record:
-        verdict = verdict_from_status(record["status"], record["report_count"])
-    else:
-        verdict = verdict_from_status("unknown")
-
-    verdict.update({
-        "type": "phone",
-        "input": phone,
-        "source": "LidaShield database",
-        "remaining": remaining
-    })
-
-    return jsonify(verdict)
-
-
-# ─────────────────────────────────────────────
-# Feature 3: Message checker
-# ─────────────────────────────────────────────
-
-@app.route("/api/check/message", methods=["POST"])
-@require_login
-def check_message():
-    user = current_user()
-    allowed, remaining, error = check_usage_limit(user["id"], "message")
-
-    if not allowed:
-        return jsonify({"error": error, "rate_limited": True, "remaining": 0}), 429
-
-    data = request.get_json() or {}
-    message = data.get("message", "").strip()
-
-    if not message:
-        return jsonify({"error": "Paste a message."}), 400
-
-    message_hash = hash_text(message)
-
-    conn = db()
-    record = conn.execute("""
-        SELECT * FROM message_records
-        WHERE message_hash = ?
-    """, (message_hash,)).fetchone()
-    conn.close()
-
-    if record:
-        verdict = verdict_from_status(record["status"], record["report_count"])
-    else:
-        verdict = verdict_from_status("unknown")
-
-    verdict.update({
-        "type": "message",
-        "source": "LidaShield database",
-        "remaining": remaining
-    })
-
-    return jsonify(verdict)
-
-
-# ─────────────────────────────────────────────
-# Feature 4: Email checker
-# ─────────────────────────────────────────────
-
-@app.route("/api/check/email", methods=["POST"])
-@require_login
-def check_email():
-    user = current_user()
-    allowed, remaining, error = check_usage_limit(user["id"], "email")
-
-    if not allowed:
-        return jsonify({"error": error, "rate_limited": True, "remaining": 0}), 429
-
-    data = request.get_json() or {}
-    email_text = data.get("email_text", "").strip()
-
-    if not email_text:
-        return jsonify({"error": "Paste email content."}), 400
-
-    email_hash = hash_text(email_text)
-
-    conn = db()
-    record = conn.execute("""
-        SELECT * FROM email_records
-        WHERE email_hash = ?
-    """, (email_hash,)).fetchone()
-    conn.close()
-
-    if record:
-        verdict = verdict_from_status(record["status"], record["report_count"])
-    else:
-        verdict = verdict_from_status("unknown")
-
-    verdict.update({
-        "type": "email",
-        "source": "LidaShield database",
-        "remaining": remaining
-    })
-
-    return jsonify(verdict)
-
-
-# ─────────────────────────────────────────────
-# Feature 5: Business audit request
-# ─────────────────────────────────────────────
-
-@app.route("/api/business-audit", methods=["POST"])
-@require_login
-def business_audit():
-    user = current_user()
-    allowed, remaining, error = check_usage_limit(user["id"], "business_audit")
-
-    if not allowed:
-        return jsonify({"error": error, "rate_limited": True, "remaining": 0}), 429
-
-    data = request.get_json() or {}
-
-    business_name = data.get("business_name", "").strip()
-    website = data.get("website", "").strip()
-    contact_email = data.get("contact_email", "").strip()
-
-    if not business_name or not website:
-        return jsonify({"error": "Business name and website are required."}), 400
-
-    conn = db()
-    conn.execute("""
-        INSERT INTO business_audits
-        (user_id, business_name, website, contact_email, status, created_at)
-        VALUES (?, ?, ?, ?, 'requested', ?)
-    """, (user["id"], business_name, website, contact_email, now()))
-    conn.commit()
-    conn.close()
-
-    return jsonify({
-        "message": "Business audit request received.",
-        "remaining": remaining
-    })
-
-
-# ─────────────────────────────────────────────
-# Dashboard
-# ─────────────────────────────────────────────
-
-@app.route("/api/dashboard")
-@require_login
+@app.route('/dashboard')
 def dashboard():
-    user = current_user()
-    conn = db()
+    user = get_user()
+    if not user:
+        return redirect(url_for('login'))
 
-    today = str(date.today())
+    conn = get_db()
+    cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-    usage = conn.execute("""
-        SELECT feature, COUNT(*) AS count
-        FROM usage_logs
-        WHERE user_id = ? AND used_on = ?
-        GROUP BY feature
-    """, (user["id"], today)).fetchall()
+    cur.execute(
+        'SELECT * FROM scan_history WHERE user_id=%s ORDER BY created_at DESC LIMIT 50',
+        (user['id'],)
+    )
+    history = cur.fetchall()
 
-    reports = conn.execute("""
-        SELECT COUNT(*) AS count
-        FROM link_records
-    """).fetchone()["count"]
-
-    confirmed = conn.execute("""
-        SELECT COUNT(*) AS count
-        FROM link_records
-        WHERE status = 'confirmed_scam'
-    """).fetchone()["count"]
-
+    cur.execute(
+        'SELECT feature, count FROM scan_usage WHERE user_id=%s AND scan_date=%s',
+        (user['id'], date.today())
+    )
+    usage = {r['feature']: r['count'] for r in cur.fetchall()}
     conn.close()
 
-    limit = PLAN_LIMITS.get(user["plan"], PLAN_LIMITS["free"])
-
-    return jsonify({
-        "user": {
-            "email": user["email"],
-            "plan": user["plan"],
-            "daily_limit": limit,
-            "is_admin": bool(user["is_admin"])
-        },
-        "usage_today": [dict(row) for row in usage],
-        "database": {
-            "total_link_records": reports,
-            "confirmed_scam_links": confirmed
-        }
-    })
+    limits = DAILY_LIMITS[user['tier']]
+    features = TIER_FEATURES[user['tier']]
+    return render_template('dashboard.html',
+                           user=user, history=history,
+                           usage=usage, limits=limits, features=features,
+                           admin=is_admin(user))
 
 
-# ─────────────────────────────────────────────
-# Admin
-# ─────────────────────────────────────────────
+@app.route('/admin')
+def admin():
+    user = get_user()
+    if not user or not is_admin(user):
+        return redirect('/')
 
-@app.route("/api/admin/links")
-@require_admin
-def admin_links():
-    conn = db()
-    rows = conn.execute("""
-        SELECT *
-        FROM link_records
-        ORDER BY updated_at DESC
+    conn = get_db()
+    cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    cur.execute('SELECT COUNT(*) as n FROM users')
+    total_users = cur.fetchone()['n']
+
+    cur.execute('SELECT COUNT(*) as n FROM threats')
+    total_threats = cur.fetchone()['n']
+
+    cur.execute("SELECT COUNT(*) as n FROM scam_reports WHERE status='pending'")
+    pending = cur.fetchone()['n']
+
+    cur.execute("""
+        SELECT u.id, u.email, u.name, u.tier, u.created_at,
+               COUNT(sh.id) AS total_scans
+        FROM users u
+        LEFT JOIN scan_history sh ON sh.user_id = u.id
+        GROUP BY u.id
+        ORDER BY total_scans DESC
+        LIMIT 30
+    """)
+    users = cur.fetchall()
+
+    cur.execute("""
+        SELECT sr.*, u.email AS reporter_email
+        FROM scam_reports sr
+        LEFT JOIN users u ON u.id = sr.user_id
+        WHERE sr.status='pending'
+        ORDER BY sr.created_at DESC
+        LIMIT 50
+    """)
+    reports = cur.fetchall()
+
+    cur.execute("""
+        SELECT source, COUNT(*) as n FROM threats GROUP BY source ORDER BY n DESC
+    """)
+    threat_sources = cur.fetchall()
+
+    conn.close()
+    return render_template('admin.html',
+                           user=user,
+                           total_users=total_users,
+                           total_threats=total_threats,
+                           pending=pending,
+                           users=users,
+                           reports=reports,
+                           threat_sources=threat_sources)
+
+# ---------------------------------------------------------------------------
+# Feature API — Feature 1: URL check
+# ---------------------------------------------------------------------------
+@app.route('/api/check-url', methods=['POST'])
+def api_check_url():
+    user = get_user()
+    data = request.get_json(silent=True) or {}
+    raw  = data.get('url', '').strip()
+    if not raw:
+        return jsonify({'error': 'URL required'}), 400
+
+    allowed, remaining, limit = check_rate_limit(user, 'url_check')
+    if not allowed:
+        return jsonify({'error': 'Daily limit reached', 'upgrade': True, 'limit': limit}), 429
+
+    threat = lookup_url(raw)
+    if threat:
+        save_history(user, 'url_check', raw, 'threat', threat['threat_type'])
+        return jsonify({
+            'result': 'threat',
+            'threat_type': threat['threat_type'],
+            'source': threat['source'],
+            'remaining': remaining,
+        })
+
+    save_history(user, 'url_check', raw, 'not_found')
+    return jsonify({'result': 'not_found', 'remaining': remaining})
+
+# ---------------------------------------------------------------------------
+# Feature 2: SMS / text scanner
+# ---------------------------------------------------------------------------
+@app.route('/api/check-sms', methods=['POST'])
+def api_check_sms():
+    user = get_user()
+    data = request.get_json(silent=True) or {}
+    text = data.get('text', '').strip()
+    if not text:
+        return jsonify({'error': 'Text required'}), 400
+
+    allowed, remaining, limit = check_rate_limit(user, 'sms_scan')
+    if not allowed:
+        return jsonify({'error': 'Daily limit reached', 'upgrade': True}), 429
+
+    urls_found = URL_RE.findall(text)
+    threats    = []
+    for u in set(urls_found):
+        t = lookup_url(u)
+        if t:
+            threats.append({'url': u, 'threat_type': t['threat_type'], 'source': t['source']})
+
+    result = 'threat' if threats else 'not_found'
+    save_history(user, 'sms_scan', text[:200], result)
+    return jsonify({'result': result, 'threats': threats, 'remaining': remaining})
+
+# ---------------------------------------------------------------------------
+# Feature 3: Phishing email checker
+# ---------------------------------------------------------------------------
+@app.route('/api/check-email', methods=['POST'])
+def api_check_email():
+    user = get_user()
+    data = request.get_json(silent=True) or {}
+    content = data.get('content', '').strip()
+    if not content:
+        return jsonify({'error': 'Email content required'}), 400
+
+    allowed, remaining, limit = check_rate_limit(user, 'email_check')
+    if not allowed:
+        return jsonify({'error': 'Daily limit reached', 'upgrade': True}), 429
+
+    urls_found = URL_RE.findall(content)
+    threats    = []
+    for u in set(urls_found):
+        t = lookup_url(u)
+        if t:
+            threats.append({'url': u, 'threat_type': t['threat_type'], 'source': t['source']})
+
+    result = 'threat' if threats else 'not_found'
+    save_history(user, 'email_check', content[:200], result)
+    return jsonify({'result': result, 'threats': threats, 'remaining': remaining})
+
+# ---------------------------------------------------------------------------
+# Feature 4: Password breach checker (local DB, k-anonymity style)
+# Client sends SHA-1 hex of password; we never store the plaintext.
+# ---------------------------------------------------------------------------
+@app.route('/api/check-password', methods=['POST'])
+def api_check_password():
+    user = get_user()
+    data = request.get_json(silent=True) or {}
+    sha1 = data.get('hash', '').strip().upper()
+
+    if len(sha1) != 40 or not all(c in '0123456789ABCDEF' for c in sha1):
+        return jsonify({'error': 'Valid SHA-1 hash required (40 hex chars)'}), 400
+
+    allowed, remaining, limit = check_rate_limit(user, 'password_check')
+    if not allowed:
+        return jsonify({'error': 'Daily limit reached', 'upgrade': True}), 429
+
+    prefix = sha1[:5]
+    suffix = sha1[5:]
+
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute(
+        'SELECT breach_count FROM pwned_passwords WHERE hash_prefix=%s AND hash_suffix=%s',
+        (prefix, suffix)
+    )
+    row = cur.fetchone()
+    conn.close()
+
+    if row:
+        save_history(user, 'password_check', '[password_hash]', 'threat', 'breached')
+        return jsonify({'result': 'breached', 'count': row[0], 'remaining': remaining})
+
+    save_history(user, 'password_check', '[password_hash]', 'not_found')
+    return jsonify({'result': 'not_found', 'remaining': remaining})
+
+# ---------------------------------------------------------------------------
+# Feature 5: Scam report database
+# ---------------------------------------------------------------------------
+@app.route('/api/reports', methods=['GET'])
+def api_reports_get():
+    conn = get_db()
+    cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        SELECT sr.id, sr.report_type, sr.value, sr.description,
+               sr.upvotes, sr.created_at, u.name AS reporter
+        FROM scam_reports sr
+        LEFT JOIN users u ON u.id = sr.user_id
+        WHERE sr.status = 'verified'
+        ORDER BY sr.created_at DESC
         LIMIT 100
-    """).fetchall()
+    """)
+    rows = [dict(r) for r in cur.fetchall()]
+    for r in rows:
+        if r.get('created_at'):
+            r['created_at'] = r['created_at'].isoformat()
     conn.close()
+    return jsonify(rows)
 
-    return jsonify([dict(row) for row in rows])
 
+@app.route('/api/reports', methods=['POST'])
+def api_reports_post():
+    user = get_user()
+    if not user:
+        return jsonify({'error': 'Login required'}), 401
 
-@app.route("/api/admin/link/<int:record_id>", methods=["POST"])
-@require_admin
-def admin_update_link(record_id):
-    data = request.get_json() or {}
-    status = data.get("status")
+    allowed, _, _ = check_rate_limit(user, 'report_submit')
+    if not allowed:
+        return jsonify({'error': 'Daily limit reached', 'upgrade': True}), 429
 
-    allowed_statuses = ["pending", "confirmed_scam", "confirmed_safe", "rejected"]
+    data = request.get_json(silent=True) or {}
+    rtype = data.get('type', '').strip()
+    value = data.get('value', '').strip()
+    desc  = data.get('description', '').strip()
 
-    if status not in allowed_statuses:
-        return jsonify({"error": "Invalid status."}), 400
+    if rtype not in ('url', 'phone', 'email', 'sms') or not value:
+        return jsonify({'error': 'Invalid report'}), 400
 
-    notes = data.get("notes", "")
-
-    conn = db()
-    conn.execute("""
-        UPDATE link_records
-        SET status = ?, notes = COALESCE(notes, '') || ?, updated_at = ?
-        WHERE id = ?
-    """, (status, f"\nAdmin note: {notes}", now(), record_id))
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute(
+        'INSERT INTO scam_reports(user_id,report_type,value,description) VALUES(%s,%s,%s,%s)',
+        (user['id'], rtype, value, desc)
+    )
     conn.commit()
     conn.close()
+    return jsonify({'success': True})
 
-    return jsonify({"message": "Record updated."})
-
-
-@app.route("/api/admin/stats")
-@require_admin
-def admin_stats():
-    conn = db()
-
-    users = conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
-    links = conn.execute("SELECT COUNT(*) AS count FROM link_records").fetchone()["count"]
-    pending = conn.execute("SELECT COUNT(*) AS count FROM link_records WHERE status = 'pending'").fetchone()["count"]
-    confirmed = conn.execute("SELECT COUNT(*) AS count FROM link_records WHERE status = 'confirmed_scam'").fetchone()["count"]
-    audits = conn.execute("SELECT COUNT(*) AS count FROM business_audits").fetchone()["count"]
-
-    conn.close()
-
-    return jsonify({
-        "users": users,
-        "link_records": links,
-        "pending_links": pending,
-        "confirmed_scam_links": confirmed,
-        "business_audits": audits
-    })
+# ---------------------------------------------------------------------------
+# Admin actions
+# ---------------------------------------------------------------------------
+def require_admin():
+    user = get_user()
+    if not user or not is_admin(user):
+        return None, jsonify({'error': 'Forbidden'}), 403
+    return user, None, None
 
 
-# ─────────────────────────────────────────────
-# Temporary plan upgrade route
-# Later replace with Stripe/real payments.
-# ─────────────────────────────────────────────
+@app.route('/admin/reports/<int:rid>/verify', methods=['POST'])
+def admin_verify(rid):
+    user = get_user()
+    if not user or not is_admin(user):
+        return jsonify({'error': 'Forbidden'}), 403
 
-@app.route("/api/dev/set-plan", methods=["POST"])
-@require_login
-def dev_set_plan():
-    data = request.get_json() or {}
-    plan = data.get("plan", "").lower().strip()
-
-    if plan not in PLAN_LIMITS:
-        return jsonify({"error": "Invalid plan."}), 400
-
-    user = current_user()
-
-    conn = db()
-    conn.execute("UPDATE users SET plan = ? WHERE id = ?", (plan, user["id"]))
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute(
+        "UPDATE scam_reports SET status='verified' WHERE id=%s RETURNING report_type, value",
+        (rid,)
+    )
+    row = cur.fetchone()
+    if row and row[0] == 'url':
+        norm  = normalize_url(row[1])
+        uhash = url_hash(norm)
+        dom   = urlparse('http://' + norm).netloc
+        cur.execute("""
+            INSERT INTO threats(url,url_hash,domain,threat_type,source)
+            VALUES(%s,%s,%s,'scam','user_report')
+            ON CONFLICT(url_hash) DO NOTHING
+        """, (row[1], uhash, dom))
     conn.commit()
     conn.close()
+    return jsonify({'success': True})
 
-    return jsonify({"message": f"Plan changed to {plan}."})
+
+@app.route('/admin/reports/<int:rid>/reject', methods=['POST'])
+def admin_reject(rid):
+    user = get_user()
+    if not user or not is_admin(user):
+        return jsonify({'error': 'Forbidden'}), 403
+
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute("UPDATE scam_reports SET status='rejected' WHERE id=%s", (rid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
 
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+@app.route('/admin/users/<int:uid>/tier', methods=['POST'])
+def admin_set_tier(uid):
+    user = get_user()
+    if not user or not is_admin(user):
+        return jsonify({'error': 'Forbidden'}), 403
+
+    data = request.get_json(silent=True) or {}
+    tier = data.get('tier', 'free')
+    if tier not in ('free', 'shield', 'pro'):
+        return jsonify({'error': 'Invalid tier'}), 400
+
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute('UPDATE users SET tier=%s WHERE id=%s', (tier, uid))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
+
+# ---------------------------------------------------------------------------
+# Stripe
+# ---------------------------------------------------------------------------
+@app.route('/stripe/create-checkout', methods=['POST'])
+def stripe_checkout():
+    user = get_user()
+    if not user:
+        return jsonify({'error': 'Login required'}), 401
+
+    data = request.get_json(silent=True) or {}
+    tier = data.get('tier')
+    if tier not in PRICE_IDS or not PRICE_IDS[tier]:
+        return jsonify({'error': 'Invalid tier'}), 400
+
+    # Get or create Stripe customer
+    cid = user['stripe_customer_id']
+    if not cid:
+        customer = stripe.Customer.create(email=user['email'], name=user['name'])
+        cid = customer.id
+        conn = get_db()
+        cur  = conn.cursor()
+        cur.execute('UPDATE users SET stripe_customer_id=%s WHERE id=%s', (cid, user['id']))
+        conn.commit()
+        conn.close()
+
+    session_obj = stripe.checkout.Session.create(
+        customer=cid,
+        mode='subscription',
+        line_items=[{'price': PRICE_IDS[tier], 'quantity': 1}],
+        success_url=request.host_url + 'stripe/success?session_id={CHECKOUT_SESSION_ID}',
+        cancel_url=request.host_url,
+    )
+    return jsonify({'url': session_obj.url})
+
+
+@app.route('/stripe/success')
+def stripe_success():
+    user = get_user()
+    return render_template('stripe_success.html', user=user)
+
+
+@app.route('/stripe/webhook', methods=['POST'])
+def stripe_webhook():
+    payload    = request.get_data()
+    sig_header = request.headers.get('Stripe-Signature', '')
+
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+    except Exception:
+        return '', 400
+
+    etype = event['type']
+
+    if etype in ('customer.subscription.created', 'customer.subscription.updated'):
+        sub     = event['data']['object']
+        cid     = sub['customer']
+        status  = sub['status']
+        price   = sub['items']['data'][0]['price']['id']
+        tier    = next((t for t, p in PRICE_IDS.items() if p == price), 'free')
+        if status != 'active':
+            tier = 'free'
+        conn = get_db()
+        cur  = conn.cursor()
+        cur.execute(
+            'UPDATE users SET tier=%s, stripe_subscription_id=%s WHERE stripe_customer_id=%s',
+            (tier, sub['id'], cid)
+        )
+        conn.commit()
+        conn.close()
+
+    elif etype == 'customer.subscription.deleted':
+        cid = event['data']['object']['customer']
+        conn = get_db()
+        cur  = conn.cursor()
+        cur.execute(
+            "UPDATE users SET tier='free', stripe_subscription_id=NULL WHERE stripe_customer_id=%s",
+            (cid,)
+        )
+        conn.commit()
+        conn.close()
+
+    return '', 200
+
+# ---------------------------------------------------------------------------
+# Run
+# ---------------------------------------------------------------------------
+if __name__ == '__main__':
+    app.run(debug=True)
