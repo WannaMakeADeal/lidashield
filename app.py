@@ -5,13 +5,17 @@ import time
 import os
 
 # ── CONFIG ─────────────────────────────────────
-API_KEY = "b4b4012c1cdb1344ab65882299b768c94d6708b10fd1e96540b939c2c99e3304"   # <-- paste your VirusTotal key here
-VT_URL  = "https://www.virustotal.com/api/v3"
+API_KEY = os.environ.get("VIRUSTOTAL_API_KEY", "")
+VT_URL = "https://www.virustotal.com/api/v3"
 # ───────────────────────────────────────────────
 
 app = Flask(__name__)
 
-HTML = open(os.path.join(os.path.dirname(__file__), "index.html")).read()
+# Load HTML template with fallback
+try:
+    HTML = open(os.path.join(os.path.dirname(__file__), "index.html")).read()
+except FileNotFoundError:
+    HTML = "<h1>Error: index.html not found</h1>"
 
 def encode_url(url):
     return base64.urlsafe_b64encode(url.encode()).decode().strip("=")
@@ -41,55 +45,57 @@ def index():
 
 @app.route("/scan", methods=["POST"])
 def scan():
-    if API_KEY == "b4b4012c1cdb1344ab65882299b768c94d6708b10fd1e96540b939c2c99e3304":
-        return jsonify({"error": "No API key set. Open app.py and paste your VirusTotal key."}), 500
-
+    # Validate API key is set
+    if not API_KEY:
+        return jsonify({"error": "API key not configured. Set VIRUSTOTAL_API_KEY environment variable."}), 500
+    
     data = request.get_json()
-    url  = data.get("url", "").strip()
-
+    url = data.get("url", "").strip()
+    
     if not url:
         return jsonify({"error": "No URL provided."}), 400
-
+    
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
-
+    
     # Try cached report first, then submit fresh
     report = get_report(url)
     if not report:
         report = submit_and_wait(url)
-
+    
     if not report:
         return jsonify({"error": "Could not retrieve report. Check your API key and internet connection."}), 500
-
+    
     attrs = report.get("data", {}).get("attributes", {})
     stats = attrs.get("last_analysis_stats", {})
-    malicious  = stats.get("malicious", 0)
+    
+    malicious = stats.get("malicious", 0)
     suspicious = stats.get("suspicious", 0)
-    harmless   = stats.get("harmless", 0)
+    harmless = stats.get("harmless", 0)
     undetected = stats.get("undetected", 0)
-    total      = malicious + suspicious + harmless + undetected
-
+    total = malicious + suspicious + harmless + undetected
+    
     if malicious == 0 and suspicious == 0:
         verdict = "safe"
     elif malicious <= 2 or suspicious <= 3:
         verdict = "suspicious"
     else:
         verdict = "dangerous"
-
+    
     engines = attrs.get("last_analysis_results", {})
     flagged = [
         name for name, res in engines.items()
         if res.get("category") in ("malicious", "suspicious")
     ]
-
+    
     return jsonify({
-        "url":        url,
-        "verdict":    verdict,
-        "malicious":  malicious,
+        "url": url,
+        "verdict": verdict,
+        "malicious": malicious,
         "suspicious": suspicious,
-        "harmless":   harmless,
-        "total":      total,
-        "flagged":    flagged[:8],
+        "harmless": harmless,
+        "total": total,
+        "flagged": flagged[:8],
         "flagged_total": len(flagged),
     })
 
