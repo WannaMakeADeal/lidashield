@@ -1409,9 +1409,9 @@ async function scanUrl(){
       throw new Error("Server returned a non-JSON error. Check Render logs for /scan.");
     }
 
-    if(!res.ok){
-      throw new Error(data.details || data.error || "Scan failed.");
-    }
+if(!res.ok){
+  throw new Error(data.details || data.error || "Report failed.");
+}
 
     showResult(data);
     loadMe();
