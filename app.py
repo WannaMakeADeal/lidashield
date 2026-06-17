@@ -54,7 +54,7 @@ VT_URL = "https://www.virustotal.com/api/v3"
 stripe.api_key = STRIPE_SECRET_KEY
 
 PLAN_LIMITS = {
-    "free": 10,
+    "free": 50,
     "shield": 500,
     "pro": 1000000
 }
