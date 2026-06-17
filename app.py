@@ -1,8 +1,8 @@
 from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for
 from authlib.integrations.flask_client import OAuth
 from werkzeug.middleware.proxy_fix import ProxyFix
-import psycopg2
-import psycopg2.extras
+import psycopg
+from psycopg.rows import dict_row
 import requests
 import base64
 import os
