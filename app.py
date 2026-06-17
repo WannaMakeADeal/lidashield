@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for
 from authlib.integrations.flask_client import OAuth
-from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.exceptions import HTTPException
 import psycopg
 from psycopg.rows import dict_row
 import requests
@@ -37,6 +37,16 @@ APP_URL = os.environ.get("APP_URL", "http://localhost:5000").rstrip("/")
 FLASK_SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "change-this-secret-key")
 
 app.secret_key = FLASK_SECRET_KEY
+@app.errorhandler(Exception)
+def handle_unexpected_error(error):
+    if isinstance(error, HTTPException):
+        return error
+
+    app.logger.exception("Unhandled server error")
+    return jsonify({
+        "error": "Server error",
+        "details": str(error)
+    }), 500
 
 VT_URL = "https://www.virustotal.com/api/v3"
 
