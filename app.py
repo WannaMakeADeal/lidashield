@@ -80,7 +80,7 @@ _db_ready = False
 def get_db():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not configured in Render Environment Variables.")
-    return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+    return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 
 def ensure_db():
