@@ -1207,18 +1207,25 @@ async function scanUrl(){
   $("scanBtn").disabled = true;
   lastScannedUrl = url;
 
-  try{
-    const res = await fetch("/scan", {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({url})
-    });
+const res = await fetch("/scan", {
+  method:"POST",
+  headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({url})
+});
 
-    const data = await res.json();
+const contentType = res.headers.get("content-type") || "";
+let data = {};
 
-    if(!res.ok){
-      throw new Error(data.error || "Scan failed.");
-    }
+if(contentType.includes("application/json")){
+  data = await res.json();
+}else{
+  const text = await res.text();
+  throw new Error("Server returned a non-JSON error. Check Render logs for /scan.");
+}
+
+if(!res.ok){
+  throw new Error(data.details || data.error || "Scan failed.");
+}
 
     showResult(data);
     loadMe();
