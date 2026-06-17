@@ -253,7 +253,7 @@ def increment_usage_and_check_lock(user):
 
         session["anon_scans_used"] = session.get("anon_scans_used", 0) + 1
         scans_used = session["anon_scans_used"]
-        scan_limit = 3
+        scan_limit = 25
 
         return {
             "locked": scans_used > scan_limit,
