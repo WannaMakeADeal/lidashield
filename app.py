@@ -2063,7 +2063,7 @@ def create_checkout_session():
         customer=customer_id,
         mode="subscription",
         line_items=[{"price": price_id, "quantity": 1}],
-        success_url=f"{APP_URL}/dashboard?billing=success",
+        success_url=f"{APP_URL}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{APP_URL}/dashboard?billing=cancelled",
         metadata={
             "user_id": str(user["id"]),
@@ -2072,6 +2072,66 @@ def create_checkout_session():
     )
 
     return jsonify({"url": checkout.url})
+
+
+@app.route("/billing/success")
+def billing_success():
+    """
+    Stripe success return route.
+    This verifies the Checkout Session and updates the user's plan immediately,
+    even before the webhook arrives. The webhook remains the long-term source
+    of truth, but this prevents the dashboard from staying FREE after payment.
+    """
+
+    user = get_current_user()
+
+    if not user:
+        session["next_url"] = "/dashboard?billing=success"
+        return redirect(url_for("login"))
+
+    session_id = request.args.get("session_id", "").strip()
+
+    if not session_id or not STRIPE_SECRET_KEY:
+        return redirect("/dashboard?billing=success")
+
+    try:
+        checkout = stripe.checkout.Session.retrieve(session_id)
+        metadata = checkout.get("metadata") or {}
+        plan = (metadata.get("plan") or "shield").lower().strip()
+        checkout_user_id = metadata.get("user_id")
+
+        if str(checkout_user_id) != str(user["id"]):
+            app.logger.warning("Checkout session user mismatch")
+            return redirect("/dashboard?billing=user_mismatch")
+
+        if plan not in ("shield", "pro"):
+            return redirect("/dashboard?billing=invalid_plan")
+
+        payment_status = checkout.get("payment_status")
+        subscription_id = checkout.get("subscription")
+        customer_id = checkout.get("customer")
+
+        if payment_status in ("paid", "no_payment_required"):
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE users
+                        SET plan = %s,
+                            stripe_customer_id = COALESCE(%s, stripe_customer_id),
+                            stripe_subscription_id = COALESCE(%s, stripe_subscription_id)
+                        WHERE id = %s
+                        """,
+                        (plan, customer_id, subscription_id, user["id"])
+                    )
+
+            return redirect("/dashboard?billing=success")
+
+        return redirect("/dashboard?billing=not_paid")
+
+    except Exception as e:
+        app.logger.exception("Billing success verification failed")
+        return redirect("/dashboard?billing=verify_failed")
 
 
 @app.route("/stripe/webhook", methods=["POST"])
