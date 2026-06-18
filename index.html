@@ -1460,6 +1460,13 @@ h1 em{
               <div id="messageReasons" class="reason-list"></div>
             </div>
 
+            <div id="messageLockedBox" class="locked-box">
+              Upgrade to Shield to unlock the full scam explanation and all detected signals.
+              <div style="margin-top:14px;">
+                <button class="btn gold" onclick="upgrade('shield')">Unlock Shield</button>
+              </div>
+            </div>
+
             <div class="message-note">
               This checker is a zero-cost beta. It does not replace human judgment, but it helps identify common scam patterns and links already found in the LidaShield database.
             </div>
@@ -1568,9 +1575,9 @@ h1 em{
           <div class="plan-price">$9.90 <span>/ month</span></div>
           <div class="plan-list">
             <div>500 scans per day</div>
-            <div>Full scan details</div>
+            <div>Full scan and message explanations</div>
             <div>Scan history</div>
-            <div>Early SMS and email checker access</div>
+            <div>Saved message-check history</div>
           </div>
           <button class="btn gold" onclick="upgrade('shield')">Upgrade to Shield</button>
         </div>
@@ -1954,6 +1961,16 @@ function showMessageResult(data){
     $("messageReasons").innerHTML = `<div class="reason">No major scam signals detected.</div>`;
   }else{
     $("messageReasons").innerHTML = reasons.map(reason => `<div class="reason">${escapeHtml(reason)}</div>`).join("");
+  }
+
+  const lockedBox = $("messageLockedBox");
+  if(lockedBox){
+    if(data.advanced_locked){
+      lockedBox.classList.add("show");
+      lockedBox.childNodes[0].textContent = data.locked_message || "Upgrade to Shield to unlock the full scam explanation and all detected signals.";
+    }else{
+      lockedBox.classList.remove("show");
+    }
   }
 }
 
