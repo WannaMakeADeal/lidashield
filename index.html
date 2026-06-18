@@ -1696,6 +1696,32 @@ createStarfield3D();
 // User Auth
 // ============================================================
 
+function updatePlanButtons(){
+  if(!currentUser){
+    return;
+  }
+
+  const plan = (currentUser.plan || "free").toLowerCase();
+
+  document.querySelectorAll("button, a.btn").forEach(el => {
+    const txt = (el.textContent || "").toLowerCase();
+
+    if(plan === "shield" && (txt.includes("upgrade to shield") || txt.includes("unlock shield") || txt.includes("start free"))){
+      el.textContent = txt.includes("start free") ? "Current account" : "Current plan";
+      el.disabled = true;
+      el.style.pointerEvents = "none";
+      el.style.opacity = ".65";
+    }
+
+    if(plan === "pro" && txt.includes("upgrade")){
+      el.textContent = "Current plan";
+      el.disabled = true;
+      el.style.pointerEvents = "none";
+      el.style.opacity = ".65";
+    }
+  });
+}
+
 async function loadMe(){
   try{
     const res = await fetch("/api/me");
@@ -1714,6 +1740,8 @@ async function loadMe(){
       if(currentUser.avatar_url){
         $("avatar").src = currentUser.avatar_url;
       }
+
+      updatePlanButtons();
     }else{
       $("loginBtn").classList.remove("hide");
       $("logoutBtn").classList.add("hide");
