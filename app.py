@@ -669,6 +669,15 @@ def ensure_db():
 
 @app.before_request
 def before_request():
+    # Professional canonical-domain fix:
+    # keep sessions, Google login, dashboard, and scanner on one domain.
+    # Without this, lidashield.com and www.lidashield.com can behave like separate sites.
+    if request.host == "lidashield.com":
+        target = "https://www.lidashield.com" + request.full_path
+        if target.endswith("?"):
+            target = target[:-1]
+        return redirect(target, code=301)
+
     ensure_db()
 
 
