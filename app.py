@@ -1587,9 +1587,26 @@ def check_message():
     analysis = analyze_scam_message(message)
     save_message_check(user["id"] if user else None, message, analysis)
 
+    plan = user.get("plan", "free") if user else "guest"
+    paid_plan = plan in ("shield", "pro")
+
+    # Free/guest users get a useful verdict, but full reasoning is a Shield feature.
+    # This gives the paid plan real value without weakening the free tool.
+    if not paid_plan:
+        full_reason_count = len(analysis.get("reasons", []))
+        analysis["full_reason_count"] = full_reason_count
+        analysis["reasons"] = analysis.get("reasons", [])[:2]
+        analysis["advanced_locked"] = full_reason_count > len(analysis["reasons"])
+        analysis["locked_message"] = "Upgrade to Shield to unlock the full scam explanation, all detected signals, and saved protection history."
+    else:
+        analysis["full_reason_count"] = len(analysis.get("reasons", []))
+        analysis["advanced_locked"] = False
+        analysis["locked_message"] = ""
+
     return jsonify({
         "ok": True,
         "message": message,
+        "plan": plan,
         **analysis
     })
 
