@@ -1117,7 +1117,7 @@ h1 em{
 
     <p class="hero-copy">
       Paste a suspicious URL from WhatsApp, SMS, email, or social media.
-      LidaShield checks its own scam database first, then uses trusted signals and pending reports carefully.
+      LidaShield checks its verified scam database first. User reports are stored for review and do not instantly affect public verdicts.
     </p>
 
     <section class="scanner-shell">
@@ -1125,7 +1125,7 @@ h1 em{
         <div class="scanner-top">
           <div>
             <div class="scanner-title">Scan a suspicious link</div>
-            <div class="scanner-small">Own database + verified evidence + pending reports</div>
+            <div class="scanner-small">Verified database + pending reports</div>
           </div>
           <div class="status-chip">Live protection</div>
         </div>
@@ -1137,7 +1137,7 @@ h1 em{
 
         <div id="loading" class="loading">
           <div class="spinner"></div>
-          Checking LidaShield database and trusted signals...
+          Checking LidaShield verified database...
         </div>
 
         <div id="errorBox" class="error"></div>
@@ -1391,6 +1391,10 @@ function formatSourceLabel(data){
     return "External cache";
   }
 
+  if(data.source === "lidashield_unverified"){
+    return "Not in database";
+  }
+
   return data.source || "LidaShield check";
 }
 
@@ -1467,7 +1471,7 @@ function showResult(data){
 
     const flagged = data.flagged || [];
     if(flagged.length === 0){
-      $("flagList").innerHTML = `<span class="flag">No engines listed</span>`;
+      $("flagList").innerHTML = `<span class="flag">No verified evidence yet</span>`;
     }else{
       $("flagList").innerHTML = flagged.map(name => {
         return `<span class="flag">${escapeHtml(name)}</span>`;
