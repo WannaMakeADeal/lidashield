@@ -856,8 +856,10 @@ def admin_import_feeds():
     - User must sign in with Google.
     - User's email must be listed in ADMIN_EMAILS in Render.
 
-    Example:
-    /admin/import-feeds?limit=250
+    Safer usage:
+    /admin/import-feeds?source=openphish&limit=50
+    /admin/import-feeds?source=urlhaus&limit=50
+    /admin/import-feeds?source=all&limit=50
     """
 
     try:
@@ -865,44 +867,61 @@ def admin_import_feeds():
         if admin_error:
             return admin_error
 
-        try:
-            limit = int(request.args.get("limit", "100"))
-        except ValueError:
-            limit = 100
+        source = (request.args.get("source") or "openphish").lower().strip()
 
-        limit = max(1, min(limit, 1000))
+        try:
+            limit = int(request.args.get("limit", "50"))
+        except ValueError:
+            limit = 50
+
+        limit = max(1, min(limit, 500))
+
+        if source not in ("openphish", "urlhaus", "all"):
+            return jsonify({
+                "error": "Invalid source.",
+                "allowed_sources": ["openphish", "urlhaus", "all"]
+            }), 400
 
         if not DATABASE_URL:
             return jsonify({"error": "Database is not configured."}), 500
 
         results = []
 
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                try:
-                    results.append(import_urlhaus(cur, limit))
-                except Exception as e:
-                    app.logger.exception("URLhaus import failed")
-                    results.append({
-                        "source": "urlhaus",
-                        "error": str(e),
-                        "type": type(e).__name__
-                    })
+        # Use autocommit so one bad URL/row cannot poison the whole transaction.
+        conn = get_db()
+        conn.autocommit = True
 
-                try:
-                    results.append(import_openphish(cur, limit))
-                except Exception as e:
-                    app.logger.exception("OpenPhish import failed")
-                    results.append({
-                        "source": "openphish",
-                        "error": str(e),
-                        "type": type(e).__name__
-                    })
+        try:
+            with conn.cursor() as cur:
+                if source in ("openphish", "all"):
+                    try:
+                        results.append(import_openphish(cur, limit))
+                    except Exception as e:
+                        app.logger.exception("OpenPhish import failed")
+                        results.append({
+                            "source": "openphish",
+                            "error": str(e),
+                            "type": type(e).__name__
+                        })
+
+                if source in ("urlhaus", "all"):
+                    try:
+                        results.append(import_urlhaus(cur, limit))
+                    except Exception as e:
+                        app.logger.exception("URLhaus import failed")
+                        results.append({
+                            "source": "urlhaus",
+                            "error": str(e),
+                            "type": type(e).__name__
+                        })
+        finally:
+            conn.close()
 
         return jsonify({
             "ok": True,
             "message": "Feed import completed.",
             "admin": admin_user.get("email"),
+            "source_requested": source,
             "limit_per_source": limit,
             "results": results
         })
@@ -913,7 +932,60 @@ def admin_import_feeds():
             "error": "Admin import failed",
             "details": str(e),
             "type": type(e).__name__,
-            "fix_hint": "Check Render logs and confirm ADMIN_EMAILS, DATABASE_URL, and Supabase table schema."
+            "fix_hint": "Try /admin/import-test-record first. Then try /admin/import-feeds?source=openphish&limit=10."
+        }), 500
+
+
+@app.route("/admin/import-test-record")
+def admin_import_test_record():
+    """
+    Inserts one test dangerous URL into LidaShield's own database.
+    This verifies that admin auth and Supabase writes work before using live feeds.
+    """
+
+    try:
+        admin_user, admin_error = require_admin()
+        if admin_error:
+            return admin_error
+
+        if not DATABASE_URL:
+            return jsonify({"error": "Database is not configured."}), 500
+
+        test_url = "https://lidashield-admin-test-dangerous.example"
+
+        conn = get_db()
+        conn.autocommit = True
+
+        try:
+            with conn.cursor() as cur:
+                upsert_scam_indicator(
+                    cur,
+                    url=test_url,
+                    verdict="dangerous",
+                    source="admin_test",
+                    notes="Admin test record inserted to verify LidaShield database writes.",
+                    malicious=4,
+                    suspicious=0,
+                    harmless=0,
+                    undetected=0,
+                )
+        finally:
+            conn.close()
+
+        return jsonify({
+            "ok": True,
+            "message": "Admin test record inserted.",
+            "admin": admin_user.get("email"),
+            "test_url": test_url,
+            "next_step": "Scan this test_url on LidaShield. It should show Dangerous from the LidaShield database."
+        })
+
+    except Exception as e:
+        app.logger.exception("Admin test record import failed")
+        return jsonify({
+            "error": "Admin test record import failed",
+            "details": str(e),
+            "type": type(e).__name__
         }), 500
 
 
