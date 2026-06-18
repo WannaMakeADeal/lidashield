@@ -377,7 +377,7 @@ def parse_vt_report(report):
         "undetected": undetected,
         "flagged": flagged[:10],
         "flagged_total": len(flagged),
-        "source": "virustotal"
+        "source": "external_intelligence"
     }
 
 
@@ -464,7 +464,7 @@ def save_to_own_database(url, normalized_url, result):
                     url,
                     normalized_url,
                     verdict,
-                    "virustotal_cache",
+                    "external_cache",
                     result.get("malicious", 0),
                     result.get("suspicious", 0),
                     result.get("harmless", 0),
@@ -654,7 +654,7 @@ def scan():
     result["url"] = raw_url
     result["normalized_url"] = normalized_url
     result["known_by_lidashield"] = False
-    result["message"] = "This link was checked externally and saved into LidaShield if suspicious."
+    result["message"] = "This link was checked with external intelligence. Only suspicious evidence is cached by LidaShield."
 
     save_to_own_database(raw_url, normalized_url, result)
     save_scan_history(user["id"] if user else None, raw_url, normalized_url, result)
@@ -699,10 +699,18 @@ def api_history():
 
 @app.route("/report", methods=["POST"])
 def report_scam():
+    """
+    User reports are saved as pending evidence only.
+    They do NOT automatically mark a URL as suspicious.
+
+    This prevents trolls from poisoning the LidaShield database.
+    A reported URL should only move into scam_urls after trusted review
+    or after strong evidence from verified sources.
+    """
     data = request.get_json(silent=True) or {}
-    raw_url = data.get("url", "").strip()
-    message = data.get("message", "").strip()
-    category = data.get("category", "url").strip() or "url"
+    raw_url = (data.get("url") or "").strip()
+    message = (data.get("message") or "User reported this link from the LidaShield scanner.").strip()
+    category = (data.get("category") or "url").strip() or "url"
 
     user = get_current_user()
 
@@ -724,8 +732,9 @@ def report_scam():
             cur.execute(
                 """
                 INSERT INTO scam_reports
-                (user_id, url, normalized_url, message, category)
-                VALUES (%s, %s, %s, %s, %s)
+                (user_id, url, normalized_url, message, category, status)
+                VALUES (%s, %s, %s, %s, %s, 'pending')
+                RETURNING id
                 """,
                 (
                     user["id"] if user else None,
@@ -735,28 +744,13 @@ def report_scam():
                     category
                 )
             )
-
-            if normalized_url:
-                cur.execute(
-                    """
-                    INSERT INTO scam_urls
-                    (url, normalized_url, verdict, source, notes, report_count)
-                    VALUES (%s, %s, 'suspicious', 'user_report', %s, 1)
-                    ON CONFLICT (normalized_url)
-                    DO UPDATE SET
-                        report_count = scam_urls.report_count + 1,
-                        updated_at = NOW()
-                    """,
-                    (
-                        raw_url,
-                        normalized_url,
-                        "Reported by a LidaShield user. Pending review."
-                    )
-                )
+            report_row = cur.fetchone()
 
     return jsonify({
         "ok": True,
-        "message": "Report received. LidaShield will use this to improve its scam database."
+        "status": "pending",
+        "report_id": report_row["id"] if report_row else None,
+        "message": "Report received. It is now pending review and will not affect the public verdict until verified."
     })
 
 
