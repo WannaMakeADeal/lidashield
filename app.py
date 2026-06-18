@@ -43,14 +43,24 @@ ADMIN_EMAILS = os.environ.get("ADMIN_EMAILS", "")
 app.secret_key = FLASK_SECRET_KEY
 @app.errorhandler(Exception)
 def handle_unexpected_error(error):
+    code = 500
+
     if isinstance(error, HTTPException):
-        return error
+        code = error.code or 500
+        details = error.description
+        name = error.name
+    else:
+        details = str(error)
+        name = "Server error"
 
     app.logger.exception("Unhandled server error")
+
     return jsonify({
-        "error": "Server error",
-        "details": str(error)
-    }), 500
+        "error": name,
+        "details": details,
+        "type": type(error).__name__,
+        "path": request.path
+    }), code
 
 VT_URL = "https://www.virustotal.com/api/v3"
 
@@ -847,49 +857,64 @@ def admin_import_feeds():
     - User's email must be listed in ADMIN_EMAILS in Render.
 
     Example:
-    /admin/import-feeds?limit=500
+    /admin/import-feeds?limit=250
     """
 
-    admin_user, admin_error = require_admin()
-    if admin_error:
-        return admin_error
-
     try:
-        limit = int(request.args.get("limit", "250"))
-    except ValueError:
-        limit = 500
+        admin_user, admin_error = require_admin()
+        if admin_error:
+            return admin_error
 
-    limit = max(1, min(limit, 5000))
+        try:
+            limit = int(request.args.get("limit", "100"))
+        except ValueError:
+            limit = 100
 
-    if not DATABASE_URL:
-        return jsonify({"error": "Database is not configured."}), 500
+        limit = max(1, min(limit, 1000))
 
-    results = []
+        if not DATABASE_URL:
+            return jsonify({"error": "Database is not configured."}), 500
 
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            try:
-                results.append(import_urlhaus(cur, limit))
-            except Exception as e:
-                results.append({
-                    "source": "urlhaus",
-                    "error": str(e)
-                })
+        results = []
 
-            try:
-                results.append(import_openphish(cur, limit))
-            except Exception as e:
-                results.append({
-                    "source": "openphish",
-                    "error": str(e)
-                })
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                try:
+                    results.append(import_urlhaus(cur, limit))
+                except Exception as e:
+                    app.logger.exception("URLhaus import failed")
+                    results.append({
+                        "source": "urlhaus",
+                        "error": str(e),
+                        "type": type(e).__name__
+                    })
 
-    return jsonify({
-        "ok": True,
-        "message": "Feed import completed.",
-        "limit_per_source": limit,
-        "results": results
-    })
+                try:
+                    results.append(import_openphish(cur, limit))
+                except Exception as e:
+                    app.logger.exception("OpenPhish import failed")
+                    results.append({
+                        "source": "openphish",
+                        "error": str(e),
+                        "type": type(e).__name__
+                    })
+
+        return jsonify({
+            "ok": True,
+            "message": "Feed import completed.",
+            "admin": admin_user.get("email"),
+            "limit_per_source": limit,
+            "results": results
+        })
+
+    except Exception as e:
+        app.logger.exception("Admin import route failed")
+        return jsonify({
+            "error": "Admin import failed",
+            "details": str(e),
+            "type": type(e).__name__,
+            "fix_hint": "Check Render logs and confirm ADMIN_EMAILS, DATABASE_URL, and Supabase table schema."
+        }), 500
 
 
 @app.route("/admin/database-stats")
@@ -899,41 +924,54 @@ def admin_database_stats():
     Requires Google sign-in and ADMIN_EMAILS match.
     """
 
-    admin_user, admin_error = require_admin()
-    if admin_error:
-        return admin_error
+    try:
+        admin_user, admin_error = require_admin()
+        if admin_error:
+            return admin_error
 
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) AS count FROM scam_urls")
-            total = cur.fetchone()["count"]
+        if not DATABASE_URL:
+            return jsonify({"error": "Database is not configured."}), 500
 
-            cur.execute(
-                """
-                SELECT source, COUNT(*) AS count
-                FROM scam_urls
-                GROUP BY source
-                ORDER BY count DESC
-                """
-            )
-            by_source = cur.fetchall()
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) AS count FROM scam_urls")
+                total = cur.fetchone()["count"]
 
-            cur.execute(
-                """
-                SELECT verdict, COUNT(*) AS count
-                FROM scam_urls
-                GROUP BY verdict
-                ORDER BY count DESC
-                """
-            )
-            by_verdict = cur.fetchall()
+                cur.execute(
+                    """
+                    SELECT source, COUNT(*) AS count
+                    FROM scam_urls
+                    GROUP BY source
+                    ORDER BY count DESC
+                    """
+                )
+                by_source = cur.fetchall()
 
-    return jsonify({
-        "ok": True,
-        "total_indicators": total,
-        "by_source": by_source,
-        "by_verdict": by_verdict
-    })
+                cur.execute(
+                    """
+                    SELECT verdict, COUNT(*) AS count
+                    FROM scam_urls
+                    GROUP BY verdict
+                    ORDER BY count DESC
+                    """
+                )
+                by_verdict = cur.fetchall()
+
+        return jsonify({
+            "ok": True,
+            "admin": admin_user.get("email"),
+            "total_indicators": total,
+            "by_source": by_source,
+            "by_verdict": by_verdict
+        })
+
+    except Exception as e:
+        app.logger.exception("Admin database stats failed")
+        return jsonify({
+            "error": "Admin database stats failed",
+            "details": str(e),
+            "type": type(e).__name__
+        }), 500
 
 
 # ============================================================
