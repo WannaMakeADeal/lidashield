@@ -11,6 +11,8 @@ import time
 from urllib.parse import urlparse, urlunparse
 from datetime import date
 import stripe
+import csv
+import io
 
 # ============================================================
 # LidaShield v1
@@ -36,6 +38,7 @@ STRIPE_PRICE_PRO = os.environ.get("STRIPE_PRICE_PRO", "")
 
 APP_URL = os.environ.get("APP_URL", "http://localhost:5000").rstrip("/")
 FLASK_SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "change-this-secret-key")
+ADMIN_IMPORT_KEY = os.environ.get("ADMIN_IMPORT_KEY", "")
 
 app.secret_key = FLASK_SECRET_KEY
 @app.errorhandler(Exception)
@@ -626,7 +629,7 @@ def scan():
         "url": raw_url,
         "normalized_url": normalized_url,
         "verdict": "unknown",
-        "score": 35,
+        "score": 0,
         "malicious": 0,
         "suspicious": 0,
         "harmless": 0,
@@ -635,7 +638,7 @@ def scan():
         "flagged_total": 0,
         "source": "lidashield_unverified",
         "known_by_lidashield": False,
-        "message": "This link is not yet in the verified LidaShield database. It has not been marked suspicious. Use Report this link if you want it reviewed."
+        "message": "No verified scam evidence was found in LidaShield yet. This does not prove the link is safe; it only means LidaShield has not verified it as suspicious."
     }
 
     save_scan_history(user["id"] if user else None, raw_url, normalized_url, result)
@@ -643,6 +646,246 @@ def scan():
     return jsonify({
         **result,
         **usage
+    })
+
+
+
+# ============================================================
+# Admin feed import
+# ============================================================
+
+def upsert_scam_indicator(cur, url, verdict, source, notes, malicious=0, suspicious=0, harmless=0, undetected=0):
+    normalized_url = normalize_url(url)
+
+    cur.execute(
+        """
+        INSERT INTO scam_urls
+        (url, normalized_url, verdict, source, notes, malicious, suspicious, harmless, undetected, report_count)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
+        ON CONFLICT (normalized_url)
+        DO UPDATE SET
+            verdict = EXCLUDED.verdict,
+            source = EXCLUDED.source,
+            notes = EXCLUDED.notes,
+            malicious = EXCLUDED.malicious,
+            suspicious = EXCLUDED.suspicious,
+            harmless = EXCLUDED.harmless,
+            undetected = EXCLUDED.undetected,
+            updated_at = NOW()
+        """,
+        (
+            url,
+            normalized_url,
+            verdict,
+            source,
+            notes,
+            malicious,
+            suspicious,
+            harmless,
+            undetected,
+        )
+    )
+
+
+def import_urlhaus(cur, limit):
+    """
+    Imports recent malware URLs from URLhaus.
+    Source format is CSV with comment lines starting with #.
+    """
+    feed_url = "https://urlhaus.abuse.ch/downloads/csv_recent/"
+    response = requests.get(feed_url, timeout=30)
+    response.raise_for_status()
+
+    imported = 0
+    skipped = 0
+
+    csv_text = "\n".join(
+        line for line in response.text.splitlines()
+        if line and not line.startswith("#")
+    )
+
+    reader = csv.reader(io.StringIO(csv_text))
+
+    for row in reader:
+        if imported >= limit:
+            break
+
+        try:
+            # Expected row layout:
+            # id, dateadded, url, url_status, last_online, threat, tags, urlhaus_link, reporter
+            if len(row) < 3:
+                skipped += 1
+                continue
+
+            url = row[2].strip().strip('"')
+
+            if not url:
+                skipped += 1
+                continue
+
+            upsert_scam_indicator(
+                cur,
+                url=url,
+                verdict="dangerous",
+                source="urlhaus",
+                notes="Imported from URLhaus recent malware URL feed.",
+                malicious=4,
+                suspicious=0,
+                harmless=0,
+                undetected=0,
+            )
+            imported += 1
+
+        except Exception:
+            skipped += 1
+
+    return {"source": "urlhaus", "imported": imported, "skipped": skipped}
+
+
+def import_openphish(cur, limit):
+    """
+    Imports phishing URLs from the OpenPhish community feed.
+    The community feed is a plain text list of URLs.
+    """
+    feed_url = "https://openphish.com/feed.txt"
+    response = requests.get(feed_url, timeout=30)
+    response.raise_for_status()
+
+    imported = 0
+    skipped = 0
+
+    for line in response.text.splitlines():
+        if imported >= limit:
+            break
+
+        url = line.strip()
+
+        if not url or url.startswith("#"):
+            continue
+
+        try:
+            upsert_scam_indicator(
+                cur,
+                url=url,
+                verdict="dangerous",
+                source="openphish",
+                notes="Imported from OpenPhish phishing feed.",
+                malicious=2,
+                suspicious=4,
+                harmless=0,
+                undetected=0,
+            )
+            imported += 1
+
+        except Exception:
+            skipped += 1
+
+    return {"source": "openphish", "imported": imported, "skipped": skipped}
+
+
+@app.route("/admin/import-feeds")
+def admin_import_feeds():
+    """
+    Protected admin-only route for importing free threat feeds into LidaShield.
+
+    Example:
+    /admin/import-feeds?key=YOUR_ADMIN_IMPORT_KEY&limit=500
+    """
+
+    if not ADMIN_IMPORT_KEY:
+        return jsonify({
+            "error": "ADMIN_IMPORT_KEY is not configured in Render."
+        }), 500
+
+    provided_key = request.args.get("key", "")
+
+    if provided_key != ADMIN_IMPORT_KEY:
+        return jsonify({"error": "Unauthorized."}), 401
+
+    try:
+        limit = int(request.args.get("limit", "500"))
+    except ValueError:
+        limit = 500
+
+    limit = max(1, min(limit, 5000))
+
+    if not DATABASE_URL:
+        return jsonify({"error": "Database is not configured."}), 500
+
+    results = []
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            try:
+                results.append(import_urlhaus(cur, limit))
+            except Exception as e:
+                results.append({
+                    "source": "urlhaus",
+                    "error": str(e)
+                })
+
+            try:
+                results.append(import_openphish(cur, limit))
+            except Exception as e:
+                results.append({
+                    "source": "openphish",
+                    "error": str(e)
+                })
+
+    return jsonify({
+        "ok": True,
+        "message": "Feed import completed.",
+        "limit_per_source": limit,
+        "results": results
+    })
+
+
+@app.route("/admin/database-stats")
+def admin_database_stats():
+    """
+    Protected admin route for checking database size.
+    """
+
+    if not ADMIN_IMPORT_KEY:
+        return jsonify({
+            "error": "ADMIN_IMPORT_KEY is not configured in Render."
+        }), 500
+
+    provided_key = request.args.get("key", "")
+
+    if provided_key != ADMIN_IMPORT_KEY:
+        return jsonify({"error": "Unauthorized."}), 401
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS count FROM scam_urls")
+            total = cur.fetchone()["count"]
+
+            cur.execute(
+                """
+                SELECT source, COUNT(*) AS count
+                FROM scam_urls
+                GROUP BY source
+                ORDER BY count DESC
+                """
+            )
+            by_source = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT verdict, COUNT(*) AS count
+                FROM scam_urls
+                GROUP BY verdict
+                ORDER BY count DESC
+                """
+            )
+            by_verdict = cur.fetchall()
+
+    return jsonify({
+        "ok": True,
+        "total_indicators": total,
+        "by_source": by_source,
+        "by_verdict": by_verdict
     })
 
 
