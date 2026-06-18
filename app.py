@@ -2102,8 +2102,12 @@ def create_checkout_session():
     if current_plan == "pro":
         return jsonify({"error": "You are already on Pro, the highest plan."}), 400
 
-    if current_plan == "shield" and plan == "shield":
-        return jsonify({"error": "You are already on Shield."}), 400
+    # Paid users should use the billing portal to change plans.
+    # This prevents creating two active Stripe subscriptions for one user.
+    if current_plan in ("shield", "pro") and user.get("stripe_subscription_id"):
+        return jsonify({
+            "error": "You already have an active subscription. Use Manage billing to change plans."
+        }), 400
 
     if not price_id:
         return jsonify({"error": f"Stripe price ID for {plan} is missing."}), 500
@@ -2238,6 +2242,31 @@ def billing_success():
         return redirect("/dashboard?billing=verify_failed")
 
 
+def plan_from_subscription_object(subscription_obj):
+    """Return shield/pro from a Stripe subscription object's price IDs."""
+
+    try:
+        items = subscription_obj.get("items", {}).get("data", [])
+    except Exception:
+        items = []
+
+    price_ids = []
+
+    for item in items:
+        price = item.get("price") or {}
+        price_id = price.get("id")
+        if price_id:
+            price_ids.append(price_id)
+
+    if STRIPE_PRICE_PRO and STRIPE_PRICE_PRO in price_ids:
+        return "pro"
+
+    if STRIPE_PRICE_SHIELD and STRIPE_PRICE_SHIELD in price_ids:
+        return "shield"
+
+    return None
+
+
 @app.route("/stripe/webhook", methods=["POST"])
 def stripe_webhook():
     if not STRIPE_WEBHOOK_SECRET:
@@ -2262,6 +2291,7 @@ def stripe_webhook():
         user_id = obj.get("metadata", {}).get("user_id")
         plan = obj.get("metadata", {}).get("plan", "shield")
         subscription_id = obj.get("subscription")
+        customer_id = obj.get("customer")
 
         if user_id and plan in ("shield", "pro"):
             with get_db() as conn:
@@ -2269,16 +2299,41 @@ def stripe_webhook():
                     cur.execute(
                         """
                         UPDATE users
-                        SET plan = %s, stripe_subscription_id = %s
+                        SET plan = %s,
+                            stripe_customer_id = COALESCE(%s, stripe_customer_id),
+                            stripe_subscription_id = COALESCE(%s, stripe_subscription_id)
                         WHERE id = %s
                         """,
-                        (plan, subscription_id, user_id)
+                        (plan, customer_id, subscription_id, user_id)
+                    )
+
+    if event_type in ("customer.subscription.created", "customer.subscription.updated"):
+        customer_id = obj.get("customer")
+        subscription_id = obj.get("id")
+        status = obj.get("status")
+        plan = plan_from_subscription_object(obj)
+
+        if customer_id and subscription_id and plan and status in ("active", "trialing"):
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE users
+                        SET plan = %s, stripe_subscription_id = %s
+                        WHERE stripe_customer_id = %s
+                          AND (stripe_subscription_id = %s OR stripe_subscription_id IS NULL)
+                        """,
+                        (plan, subscription_id, customer_id, subscription_id)
                     )
 
     if event_type == "customer.subscription.deleted":
         customer_id = obj.get("customer")
+        subscription_id = obj.get("id")
 
-        if customer_id:
+        # Only downgrade the user if the deleted subscription is the one
+        # currently stored on their account. This prevents an old Shield
+        # cancellation from wiping a newer Pro subscription.
+        if customer_id and subscription_id:
             with get_db() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -2286,8 +2341,9 @@ def stripe_webhook():
                         UPDATE users
                         SET plan = 'free', stripe_subscription_id = NULL
                         WHERE stripe_customer_id = %s
+                          AND stripe_subscription_id = %s
                         """,
-                        (customer_id,)
+                        (customer_id, subscription_id)
                     )
 
     return jsonify({"ok": True})
