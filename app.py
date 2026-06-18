@@ -305,7 +305,7 @@ def calculate_score(malicious, suspicious):
 
 
 # ============================================================
-# VirusTotal helpers
+# Legacy external-scan helpers (currently disabled)
 # ============================================================
 
 def vt_get_report(url):
@@ -489,7 +489,7 @@ def health():
         "ok": True,
         "app": "LidaShield",
         "database": bool(DATABASE_URL),
-        "virustotal": bool(VIRUSTOTAL_API_KEY),
+        "external_scanning": False,
         "google_oauth": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
         "stripe": bool(STRIPE_SECRET_KEY)
     })
@@ -620,43 +620,24 @@ def scan():
             **usage
         })
 
-    # 2. If not found, use VirusTotal as backup
-    report = vt_get_report(normalized_url)
+    # 2. If not found, do NOT use VirusTotal or any external scanner.
+    # Unknown means: not verified in LidaShield yet.
+    result = {
+        "url": raw_url,
+        "normalized_url": normalized_url,
+        "verdict": "unknown",
+        "score": 35,
+        "malicious": 0,
+        "suspicious": 0,
+        "harmless": 0,
+        "undetected": 0,
+        "flagged": [],
+        "flagged_total": 0,
+        "source": "lidashield_unverified",
+        "known_by_lidashield": False,
+        "message": "This link is not yet in the verified LidaShield database. It has not been marked suspicious. Use Report this link if you want it reviewed."
+    }
 
-    if not report:
-        report = vt_submit_and_wait(normalized_url)
-
-    if not report:
-        result = {
-            "url": raw_url,
-            "normalized_url": normalized_url,
-            "verdict": "unknown",
-            "score": 50,
-            "malicious": 0,
-            "suspicious": 0,
-            "harmless": 0,
-            "undetected": 0,
-            "flagged": [],
-            "flagged_total": 0,
-            "source": "lidashield",
-            "known_by_lidashield": False,
-            "message": "This link is not in the LidaShield database yet, and external scan data was unavailable."
-        }
-
-        save_scan_history(user["id"] if user else None, raw_url, normalized_url, result)
-
-        return jsonify({
-            **result,
-            **usage
-        })
-
-    result = parse_vt_report(report)
-    result["url"] = raw_url
-    result["normalized_url"] = normalized_url
-    result["known_by_lidashield"] = False
-    result["message"] = "This link was checked with external intelligence. Only suspicious evidence is cached by LidaShield."
-
-    save_to_own_database(raw_url, normalized_url, result)
     save_scan_history(user["id"] if user else None, raw_url, normalized_url, result)
 
     return jsonify({
