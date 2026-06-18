@@ -397,6 +397,10 @@ h1{
         <div class="label">Total scans</div>
       </div>
       <div class="card">
+        <div id="messageChecks" class="num">0</div>
+        <div class="label">Message checks</div>
+      </div>
+      <div class="card">
         <div id="dbTotal" class="num">0</div>
         <div class="label">Database indicators</div>
       </div>
@@ -407,6 +411,11 @@ h1{
         <h3>Scan a link</h3>
         <p>Check a suspicious WhatsApp, SMS, email, or social media link.</p>
         <a class="btn gold" href="/">Open scanner</a>
+      </div>
+      <div class="action">
+        <h3>Check a message</h3>
+        <p>Analyze a suspicious SMS or WhatsApp message using LidaShield's zero-cost signal engine.</p>
+        <a class="btn gold" href="/#message-checker">Open message checker</a>
       </div>
       <div class="action">
         <h3>Upgrade protection</h3>
@@ -424,6 +433,13 @@ h1{
       <div class="card">
         <div class="section-title">Recent scans</div>
         <div id="recentScans" class="list">
+          <div class="item"><span class="item-main">Loading...</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">Recent message checks</div>
+        <div id="recentMessages" class="list">
           <div class="item"><span class="item-main">Loading...</span></div>
         </div>
       </div>
@@ -470,6 +486,7 @@ async function loadDashboard(){
     $("scansToday").textContent = data.usage.scans_used_today || 0;
     $("scanLimit").textContent = data.usage.scan_limit || 0;
     $("totalScans").textContent = data.total_scans || 0;
+    $("messageChecks").textContent = data.message_checks?.total || 0;
     $("dbTotal").textContent = data.database.total_indicators || 0;
 
     const scans = data.recent_scans || [];
@@ -482,6 +499,22 @@ async function loadDashboard(){
           <div class="item">
             <span class="item-main">${escapeHtml(scan.url)}</span>
             <span class="badge ${escapeHtml(verdict)}">${escapeHtml(verdict)}</span>
+          </div>
+        `;
+      }).join("");
+    }
+
+    const messages = data.message_checks?.recent || [];
+    if(messages.length === 0){
+      $("recentMessages").innerHTML = `<div class="item"><span class="item-main">No message checks yet.</span><span class="badge unknown">empty</span></div>`;
+    }else{
+      $("recentMessages").innerHTML = messages.map(item => {
+        const verdict = item.verdict || "unknown";
+        const preview = (item.message || "").slice(0, 90);
+        return `
+          <div class="item">
+            <span class="item-main">${escapeHtml(preview)}${(item.message || "").length > 90 ? "..." : ""}</span>
+            <span class="badge ${escapeHtml(verdict)}">${escapeHtml(verdict)} ${item.score ?? 0}</span>
           </div>
         `;
       }).join("");
@@ -1162,6 +1195,28 @@ def api_dashboard():
             )
             reports_by_status = cur.fetchall()
 
+            cur.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM message_checks
+                WHERE user_id = %s
+                """,
+                (user["id"],)
+            )
+            total_message_checks = cur.fetchone()["count"]
+
+            cur.execute(
+                """
+                SELECT message, verdict, score, created_at
+                FROM message_checks
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+                LIMIT 8
+                """,
+                (user["id"],)
+            )
+            recent_message_checks = cur.fetchall()
+
             cur.execute("SELECT COUNT(*) AS count FROM scam_urls")
             total_indicators = cur.fetchone()["count"]
 
@@ -1190,6 +1245,10 @@ def api_dashboard():
         },
         "total_scans": total_scans,
         "recent_scans": recent_scans,
+        "message_checks": {
+            "total": total_message_checks,
+            "recent": recent_message_checks
+        },
         "reports": {
             "by_status": reports_by_status
         },
