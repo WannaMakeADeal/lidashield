@@ -1117,7 +1117,7 @@ h1 em{
 
     <p class="hero-copy">
       Paste a suspicious URL from WhatsApp, SMS, email, or social media.
-      LidaShield checks its own scam database first, then uses external intelligence when needed.
+      LidaShield checks its own scam database first, then uses trusted signals and pending reports carefully.
     </p>
 
     <section class="scanner-shell">
@@ -1125,7 +1125,7 @@ h1 em{
         <div class="scanner-top">
           <div>
             <div class="scanner-title">Scan a suspicious link</div>
-            <div class="scanner-small">Own database + external verification + user reports</div>
+            <div class="scanner-small">Own database + verified evidence + pending reports</div>
           </div>
           <div class="status-chip">Live protection</div>
         </div>
@@ -1137,7 +1137,7 @@ h1 em{
 
         <div id="loading" class="loading">
           <div class="spinner"></div>
-          Checking LidaShield database and external sources...
+          Checking LidaShield database and trusted signals...
         </div>
 
         <div id="errorBox" class="error"></div>
@@ -1178,7 +1178,7 @@ h1 em{
           </div>
 
           <div id="flaggedSection" class="flagged">
-            <div class="flagged-title">Flagged by engines</div>
+            <div class="flagged-title">External evidence</div>
             <div id="flagList" class="flag-list"></div>
           </div>
 
@@ -1205,7 +1205,7 @@ h1 em{
           <div class="feature-num">01</div>
           <div class="feature-title">Scam link database</div>
           <div class="feature-copy">
-            LidaShield checks its own database first. User reports and cached suspicious scans help the dataset grow.
+            LidaShield checks its own database first. User reports go into pending review first. Only verified evidence becomes part of the public scam database.
           </div>
         </div>
 
@@ -1378,6 +1378,22 @@ function clearError(){
   $("errorBox").classList.remove("show");
 }
 
+function formatSourceLabel(data){
+  if(data.known_by_lidashield){
+    return "LidaShield database";
+  }
+
+  if(data.source === "external_intelligence" || data.source === "virustotal"){
+    return "External intelligence";
+  }
+
+  if(data.source === "external_cache"){
+    return "External cache";
+  }
+
+  return data.source || "LidaShield check";
+}
+
 async function scanUrl(){
   const url = $("urlInput").value.trim();
 
@@ -1410,7 +1426,7 @@ async function scanUrl(){
     }
 
 if(!res.ok){
-  throw new Error(data.details || data.error || "Report failed.");
+  throw new Error(data.details || data.error || "Scan failed.");
 }
 
     showResult(data);
@@ -1431,7 +1447,7 @@ function showResult(data){
 
   $("verdictOrb").className = `verdict-orb ${verdict}`;
   $("verdictText").textContent = verdict;
-  $("sourcePill").textContent = data.known_by_lidashield ? "LidaShield database" : (data.source || "external");
+  $("sourcePill").textContent = formatSourceLabel(data);
 
   $("resultUrl").textContent = data.normalized_url || data.url || "";
 
@@ -1482,10 +1498,10 @@ async function reportCurrent(){
     const data = await res.json();
 
     if(!res.ok){
-      throw new Error(data.error || "Report failed.");
+      throw new Error(data.details || data.error || "Report failed.");
     }
 
-    $("messageBox").textContent = "Report received. This helps LidaShield build its own scam database.";
+    $("messageBox").textContent = data.message || "Report received. It is now pending review and will not affect the public verdict until verified.";
   }catch(e){
     showError(e.message || "Report failed.");
   }
