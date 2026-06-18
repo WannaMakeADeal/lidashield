@@ -310,12 +310,12 @@ body::after{
 /* Hero */
 
 .hero{
-  min-height:100vh;
+  min-height:auto;
   display:flex;
   flex-direction:column;
   align-items:center;
   justify-content:center;
-  padding:130px 22px 70px;
+  padding:128px 22px 76px;
   text-align:center;
   animation:fadeInHero .6s ease-out;
 }
@@ -387,6 +387,7 @@ h1 em{
 
 .scanner-shell{
   width:min(920px, 100%);
+  scroll-margin-top:96px;
   margin-top:54px;
   padding:2px;
   border-radius:30px;
@@ -799,6 +800,7 @@ h1 em{
 
 .section{
   padding:90px 22px;
+  scroll-margin-top:96px;
 }
 
 .section-inner{
@@ -1056,7 +1058,8 @@ h1 em{
   }
 
   .grid,
-  .plans{
+  .plans,
+  .product-map{
     grid-template-columns:1fr;
   }
 
@@ -1107,6 +1110,44 @@ h1 em{
   }
 }
 
+
+/* Product navigation */
+.tool-jump-row{
+  display:flex;
+  justify-content:center;
+  gap:12px;
+  flex-wrap:wrap;
+  margin-top:28px;
+  animation:fadeInHero .6s ease-out .35s both;
+}
+.tool-note{
+  margin-top:14px;
+  color:var(--muted2);
+  font-size:12px;
+  line-height:1.7;
+  max-width:680px;
+}
+.product-map{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:16px;
+  margin-bottom:38px;
+}
+.product-map-card{
+  border:1px solid rgba(240,168,48,.14);
+  background:rgba(255,255,255,.035);
+  border-radius:22px;
+  padding:22px;
+}
+.product-map-card h3{
+  font-size:16px;
+  margin-bottom:8px;
+}
+.product-map-card p{
+  color:var(--muted);
+  font-size:13px;
+  line-height:1.7;
+}
 
 /* SMS / WhatsApp Checker */
 .message-check-shell{
@@ -1216,20 +1257,27 @@ h1 em{
     <div class="kicker">Free Scam Detection Tool</div>
 
     <h1>
-      Is this link<br>
-      <em>safe?</em>
+      Scam protection<br>
+      <em>command centre.</em>
     </h1>
 
     <p class="hero-copy">
-      Paste a suspicious URL from WhatsApp, SMS, email, or social media.
-      LidaShield checks its verified scam database first. Unknown links are not called suspicious unless verified evidence exists.
+      Check suspicious links and messages from WhatsApp, SMS, email, or social media.
+      LidaShield checks verified evidence first, and unknown links are not called suspicious without proof.
     </p>
 
-    <section class="scanner-shell">
+    <div class="tool-jump-row">
+      <a class="btn gold" href="#link-scanner">Link scanner</a>
+      <a class="btn" href="#message-checker">Message checker</a>
+      <a class="btn" href="/dashboard">Dashboard</a>
+    </div>
+    <div class="tool-note">Start with the scanner for links, or use the message checker for suspicious SMS and WhatsApp text.</div>
+
+    <section id="link-scanner" class="scanner-shell">
       <div class="scanner">
         <div class="scanner-top">
           <div>
-            <div class="scanner-title">Scan a suspicious link</div>
+            <div class="scanner-title">1. Link scanner</div>
             <div class="scanner-small">Verified database + pending reports</div>
           </div>
           <div class="status-chip">Live protection</div>
@@ -1302,15 +1350,15 @@ h1 em{
   <section id="message-checker" class="section">
     <div class="section-inner">
       <div class="section-head">
-        <div class="section-kicker">WhatsApp / SMS Protection</div>
-        <div class="section-title">Check a suspicious message</div>
+        <div class="section-kicker">Protection Tool 2</div>
+        <div class="section-title">SMS / WhatsApp scam checker</div>
       </div>
 
       <section class="message-check-shell">
         <div class="message-checker">
           <div class="scanner-top">
             <div>
-              <div class="scanner-title">Paste the message here</div>
+              <div class="scanner-title">2. Message checker</div>
               <div class="scanner-small">Zero-cost scam signal analysis + LidaShield URL database matching</div>
             </div>
             <div class="status-chip">Beta</div>
@@ -1367,6 +1415,32 @@ h1 em{
           </div>
         </div>
       </section>
+    </div>
+  </section>
+
+
+
+  <section class="section">
+    <div class="section-inner">
+      <div class="section-head">
+        <div class="section-kicker">How LidaShield works</div>
+        <div class="section-title">A cleaner product flow</div>
+      </div>
+
+      <div class="product-map">
+        <div class="product-map-card">
+          <h3>1. Check</h3>
+          <p>Users scan a suspicious link or paste a suspicious message.</p>
+        </div>
+        <div class="product-map-card">
+          <h3>2. Explain</h3>
+          <p>LidaShield shows the verdict, risk score, and the reasons behind it.</p>
+        </div>
+        <div class="product-map-card">
+          <h3>3. Remember</h3>
+          <p>Signed-in users get history, reports, and a dashboard that becomes the paid product layer.</p>
+        </div>
+      </div>
     </div>
   </section>
 
