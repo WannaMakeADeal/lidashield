@@ -1178,7 +1178,7 @@ h1 em{
           </div>
 
           <div id="flaggedSection" class="flagged">
-            <div class="flagged-title">External evidence</div>
+            <div class="flagged-title">Verification evidence</div>
             <div id="flagList" class="flag-list"></div>
           </div>
 
@@ -1402,6 +1402,30 @@ function formatSourceLabel(data){
   return data.source || "LidaShield check";
 }
 
+function sourceEvidenceLabel(source){
+  if(source === "openphish"){
+    return "OpenPhish phishing feed";
+  }
+
+  if(source === "urlhaus"){
+    return "URLhaus malware URL feed";
+  }
+
+  if(source === "admin_test"){
+    return "Admin verified test record";
+  }
+
+  if(source === "external_cache"){
+    return "Cached external evidence";
+  }
+
+  if(source === "user_report"){
+    return "Legacy user report evidence";
+  }
+
+  return "LidaShield verified database";
+}
+
 async function scanUrl(){
   const url = $("urlInput").value.trim();
 
@@ -1475,7 +1499,11 @@ function showResult(data){
 
     const flagged = data.flagged || [];
     if(flagged.length === 0){
-      $("flagList").innerHTML = `<span class="flag">No verified scam evidence yet</span>`;
+      if(data.known_by_lidashield){
+        $("flagList").innerHTML = `<span class="flag">${escapeHtml(sourceEvidenceLabel(data.source))}</span>`;
+      }else{
+        $("flagList").innerHTML = `<span class="flag">No verified scam evidence yet</span>`;
+      }
     }else{
       $("flagList").innerHTML = flagged.map(name => {
         return `<span class="flag">${escapeHtml(name)}</span>`;
