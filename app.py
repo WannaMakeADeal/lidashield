@@ -499,6 +499,19 @@ async function loadDashboard(){
     $("profileEmail").textContent = data.user.email;
     $("profilePlan").textContent = data.user.plan || "free";
 
+    const currentPlan = (data.user.plan || "free").toLowerCase();
+    document.querySelectorAll("button").forEach(btn => {
+      const txt = btn.textContent.toLowerCase();
+      if(currentPlan === "shield" && txt.includes("upgrade shield")){
+        btn.textContent = "Current plan";
+        btn.disabled = true;
+      }
+      if(currentPlan === "pro" && txt.includes("upgrade")){
+        btn.textContent = "Current plan";
+        btn.disabled = true;
+      }
+    });
+
     if(data.user.avatar_url){
       $("avatar").src = data.user.avatar_url;
     }
@@ -2080,6 +2093,17 @@ def create_checkout_session():
         price_id = STRIPE_PRICE_PRO
     else:
         return jsonify({"error": "Invalid plan."}), 400
+
+    current_plan = (user.get("plan") or "free").lower().strip()
+
+    if current_plan == plan:
+        return jsonify({"error": f"You are already on the {plan.title()} plan."}), 400
+
+    if current_plan == "pro":
+        return jsonify({"error": "You are already on Pro, the highest plan."}), 400
+
+    if current_plan == "shield" and plan == "shield":
+        return jsonify({"error": "You are already on Shield."}), 400
 
     if not price_id:
         return jsonify({"error": f"Stripe price ID for {plan} is missing."}), 500
