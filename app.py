@@ -94,6 +94,441 @@ try:
 except FileNotFoundError:
     HTML = "<h1>LidaShield error: index.html not found</h1>"
 
+
+# -----------------------------
+# Dashboard HTML
+# -----------------------------
+DASHBOARD_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LidaShield Dashboard</title>
+<link rel="icon" type="image/png" href="/static/lidashield-icon.png">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=DM+Mono:wght@300;400;500&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#03030a;
+  --card:rgba(255,255,255,.045);
+  --card2:rgba(255,255,255,.075);
+  --gold:#f0a830;
+  --gold2:#ffd27a;
+  --text:#f4efe6;
+  --muted:#8c8376;
+  --border:rgba(240,168,48,.18);
+  --green:#54d483;
+  --red:#ff5c68;
+  --blue:#78a6ff;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  min-height:100vh;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(240,168,48,.08), transparent 26%),
+    radial-gradient(circle at 80% 10%, rgba(255,255,255,.05), transparent 20%),
+    var(--bg);
+  color:var(--text);
+  font-family:Inter,system-ui,sans-serif;
+}
+body::before{
+  content:"";
+  position:fixed;
+  inset:0;
+  background-image:
+    linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
+  background-size:42px 42px;
+  pointer-events:none;
+}
+.page{position:relative;z-index:1}
+.nav{
+  height:86px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 44px;
+  border-bottom:1px solid var(--border);
+  background:rgba(3,3,10,.72);
+  backdrop-filter:blur(22px);
+}
+.brand{
+  display:flex;
+  align-items:center;
+  gap:14px;
+  color:var(--text);
+  text-decoration:none;
+}
+.logo{width:46px;height:46px;object-fit:contain;filter:drop-shadow(0 0 18px rgba(240,168,48,.28))}
+.brand-name{
+  font-family:Cormorant Garamond,serif;
+  font-size:28px;
+  color:var(--gold2);
+  letter-spacing:.04em;
+}
+.brand-sub{
+  font-family:DM Mono,monospace;
+  font-size:10px;
+  letter-spacing:.18em;
+  color:var(--muted);
+  text-transform:uppercase;
+}
+.nav-actions{display:flex;gap:12px;align-items:center}
+.btn{
+  border:1px solid var(--border);
+  background:rgba(255,255,255,.04);
+  color:var(--text);
+  padding:12px 16px;
+  border-radius:14px;
+  font-family:DM Mono,monospace;
+  font-size:11px;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  text-decoration:none;
+  cursor:pointer;
+}
+.btn.gold{
+  background:linear-gradient(135deg,var(--gold),var(--gold2));
+  color:#080805;
+  border-color:var(--gold);
+  font-weight:700;
+}
+.wrap{
+  width:min(1180px,100%);
+  margin:0 auto;
+  padding:56px 24px 90px;
+}
+.hero{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:24px;
+  margin-bottom:28px;
+}
+.kicker{
+  color:var(--gold);
+  font-family:DM Mono,monospace;
+  letter-spacing:.18em;
+  font-size:12px;
+  text-transform:uppercase;
+  margin-bottom:14px;
+}
+h1{
+  font-family:Cormorant Garamond,serif;
+  font-size:clamp(46px,6vw,82px);
+  line-height:.92;
+  font-weight:400;
+}
+.hero-copy{
+  margin-top:18px;
+  max-width:640px;
+  color:var(--muted);
+  line-height:1.8;
+  font-size:14px;
+}
+.profile-card{
+  min-width:280px;
+  border:1px solid var(--border);
+  background:rgba(255,255,255,.045);
+  border-radius:24px;
+  padding:22px;
+}
+.profile-row{display:flex;gap:14px;align-items:center}
+.avatar{width:46px;height:46px;border-radius:50%;background:var(--gold)}
+.profile-name{font-weight:700}
+.profile-email{color:var(--muted);font-size:12px;margin-top:4px}
+.plan{
+  display:inline-flex;
+  margin-top:16px;
+  padding:7px 11px;
+  border:1px solid rgba(240,168,48,.32);
+  border-radius:999px;
+  color:var(--gold2);
+  font-family:DM Mono,monospace;
+  text-transform:uppercase;
+  font-size:11px;
+}
+.grid{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:16px;
+  margin-top:28px;
+}
+.card{
+  border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.045);
+  border-radius:24px;
+  padding:24px;
+}
+.card:hover{
+  border-color:rgba(240,168,48,.26);
+  background:rgba(255,255,255,.07);
+}
+.num{
+  font-family:Cormorant Garamond,serif;
+  font-size:44px;
+  line-height:1;
+}
+.label{
+  margin-top:9px;
+  color:var(--muted);
+  font-family:DM Mono,monospace;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  font-size:11px;
+}
+.two{
+  display:grid;
+  grid-template-columns:1.2fr .8fr;
+  gap:18px;
+  margin-top:18px;
+}
+.section-title{
+  font-family:Cormorant Garamond,serif;
+  font-size:32px;
+  font-weight:500;
+  margin-bottom:18px;
+}
+.list{display:flex;flex-direction:column;gap:12px}
+.item{
+  display:flex;
+  justify-content:space-between;
+  gap:14px;
+  padding:14px 0;
+  border-bottom:1px solid rgba(255,255,255,.07);
+  color:var(--muted);
+  font-size:13px;
+}
+.item:last-child{border-bottom:0}
+.item-main{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.badge{
+  font-family:DM Mono,monospace;
+  font-size:10px;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+}
+.safe{color:var(--green)}
+.dangerous{color:var(--red)}
+.suspicious{color:var(--gold)}
+.unknown{color:var(--blue)}
+.actions{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:14px;
+  margin-top:18px;
+}
+.action{
+  border:1px solid var(--border);
+  border-radius:22px;
+  padding:22px;
+  background:rgba(240,168,48,.055);
+}
+.action h3{font-size:17px;margin-bottom:10px}
+.action p{font-size:13px;line-height:1.7;color:var(--muted);margin-bottom:16px}
+.error{color:#ff9ca4}
+@media(max-width:900px){
+  .nav{padding:0 18px}
+  .hero{flex-direction:column;align-items:stretch}
+  .grid{grid-template-columns:repeat(2,1fr)}
+  .two{grid-template-columns:1fr}
+  .actions{grid-template-columns:1fr}
+}
+@media(max-width:520px){
+  .grid{grid-template-columns:1fr}
+  .brand-sub{display:none}
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <nav class="nav">
+    <a class="brand" href="/">
+      <img class="logo" src="/static/lidashield-icon.png" alt="LidaShield logo">
+      <div>
+        <div class="brand-name">LidaShield</div>
+        <div class="brand-sub">Scam Intelligence</div>
+      </div>
+    </a>
+    <div class="nav-actions">
+      <a class="btn" href="/">Scanner</a>
+      <a class="btn" href="/logout">Logout</a>
+    </div>
+  </nav>
+
+  <main class="wrap">
+    <section class="hero">
+      <div>
+        <div class="kicker">Account Dashboard</div>
+        <h1>Your protection<br>command centre.</h1>
+        <p class="hero-copy">
+          Track your scans, reports, plan usage, and LidaShield's growing scam intelligence database.
+        </p>
+      </div>
+
+      <div class="profile-card">
+        <div class="profile-row">
+          <img id="avatar" class="avatar" alt="">
+          <div>
+            <div id="profileName" class="profile-name">Loading...</div>
+            <div id="profileEmail" class="profile-email"></div>
+          </div>
+        </div>
+        <div id="profilePlan" class="plan">free</div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <div id="scansToday" class="num">0</div>
+        <div class="label">Scans today</div>
+      </div>
+      <div class="card">
+        <div id="scanLimit" class="num">0</div>
+        <div class="label">Daily limit</div>
+      </div>
+      <div class="card">
+        <div id="totalScans" class="num">0</div>
+        <div class="label">Total scans</div>
+      </div>
+      <div class="card">
+        <div id="dbTotal" class="num">0</div>
+        <div class="label">Database indicators</div>
+      </div>
+    </section>
+
+    <section class="actions">
+      <div class="action">
+        <h3>Scan a link</h3>
+        <p>Check a suspicious WhatsApp, SMS, email, or social media link.</p>
+        <a class="btn gold" href="/">Open scanner</a>
+      </div>
+      <div class="action">
+        <h3>Upgrade protection</h3>
+        <p>Unlock more scans, saved history, and early access to SMS checking.</p>
+        <button class="btn gold" onclick="upgrade('shield')">Upgrade Shield</button>
+      </div>
+      <div class="action">
+        <h3>Admin intelligence</h3>
+        <p>Admin-only database tools for feed import and intelligence growth.</p>
+        <a class="btn" href="/admin/database-stats">Database stats</a>
+      </div>
+    </section>
+
+    <section class="two">
+      <div class="card">
+        <div class="section-title">Recent scans</div>
+        <div id="recentScans" class="list">
+          <div class="item"><span class="item-main">Loading...</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">Your reports</div>
+        <div id="reportStats" class="list">
+          <div class="item"><span class="item-main">Loading...</span></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function escapeHtml(str){
+  return String(str || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+async function loadDashboard(){
+  try{
+    const res = await fetch("/api/dashboard");
+    const data = await res.json();
+
+    if(!res.ok){
+      throw new Error(data.error || "Dashboard failed.");
+    }
+
+    $("profileName").textContent = data.user.name || data.user.email;
+    $("profileEmail").textContent = data.user.email;
+    $("profilePlan").textContent = data.user.plan || "free";
+
+    if(data.user.avatar_url){
+      $("avatar").src = data.user.avatar_url;
+    }
+
+    $("scansToday").textContent = data.usage.scans_used_today || 0;
+    $("scanLimit").textContent = data.usage.scan_limit || 0;
+    $("totalScans").textContent = data.total_scans || 0;
+    $("dbTotal").textContent = data.database.total_indicators || 0;
+
+    const scans = data.recent_scans || [];
+    if(scans.length === 0){
+      $("recentScans").innerHTML = `<div class="item"><span class="item-main">No scans yet.</span><span class="badge unknown">empty</span></div>`;
+    }else{
+      $("recentScans").innerHTML = scans.map(scan => {
+        const verdict = scan.verdict || "unknown";
+        return `
+          <div class="item">
+            <span class="item-main">${escapeHtml(scan.url)}</span>
+            <span class="badge ${escapeHtml(verdict)}">${escapeHtml(verdict)}</span>
+          </div>
+        `;
+      }).join("");
+    }
+
+    const reports = data.reports.by_status || [];
+    if(reports.length === 0){
+      $("reportStats").innerHTML = `<div class="item"><span class="item-main">No reports submitted yet.</span><span class="badge unknown">empty</span></div>`;
+    }else{
+      $("reportStats").innerHTML = reports.map(row => {
+        return `
+          <div class="item">
+            <span class="item-main">${escapeHtml(row.status)}</span>
+            <span class="badge suspicious">${row.count}</span>
+          </div>
+        `;
+      }).join("");
+    }
+  }catch(e){
+    document.body.innerHTML = `<pre class="error">${escapeHtml(e.message || "Dashboard failed.")}</pre>`;
+  }
+}
+
+async function upgrade(plan){
+  try{
+    const res = await fetch("/create-checkout-session", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({plan})
+    });
+
+    const data = await res.json();
+
+    if(!res.ok){
+      throw new Error(data.error || "Could not start checkout.");
+    }
+
+    window.location.href = data.url;
+  }catch(e){
+    alert(e.message || "Stripe checkout is not ready yet.");
+  }
+}
+
+loadDashboard();
+</script>
+</body>
+</html>
+"""
+
 _db_ready = False
 
 
@@ -608,7 +1043,7 @@ def auth_callback():
             user = cur.fetchone()
 
     session["user_id"] = user["id"]
-    next_url = session.pop("next_url", "/")
+    next_url = session.pop("next_url", "/dashboard")
     return redirect(next_url)
 
 
@@ -639,6 +1074,117 @@ def api_me():
         }
     })
 
+
+
+
+# ============================================================
+# Dashboard routes
+# ============================================================
+
+@app.route("/dashboard")
+def dashboard():
+    user = get_current_user()
+
+    if not user:
+        session["next_url"] = "/dashboard"
+        return redirect(url_for("login"))
+
+    return render_template_string(DASHBOARD_HTML)
+
+
+@app.route("/api/dashboard")
+def api_dashboard():
+    user = get_current_user()
+
+    if not user:
+        return jsonify({"error": "Please sign in first."}), 401
+
+    plan = user.get("plan", "free")
+    scan_limit = get_plan_limit(plan)
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT scans_used
+                FROM usage_limits
+                WHERE user_id = %s AND scan_date = CURRENT_DATE
+                """,
+                (user["id"],)
+            )
+            usage_row = cur.fetchone()
+            scans_used_today = usage_row["scans_used"] if usage_row else 0
+
+            cur.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM scan_history
+                WHERE user_id = %s
+                """,
+                (user["id"],)
+            )
+            total_scans = cur.fetchone()["count"]
+
+            cur.execute(
+                """
+                SELECT url, verdict, source, scanned_at
+                FROM scan_history
+                WHERE user_id = %s
+                ORDER BY scanned_at DESC
+                LIMIT 10
+                """,
+                (user["id"],)
+            )
+            recent_scans = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT status, COUNT(*) AS count
+                FROM scam_reports
+                WHERE user_id = %s
+                GROUP BY status
+                ORDER BY count DESC
+                """,
+                (user["id"],)
+            )
+            reports_by_status = cur.fetchall()
+
+            cur.execute("SELECT COUNT(*) AS count FROM scam_urls")
+            total_indicators = cur.fetchone()["count"]
+
+            cur.execute(
+                """
+                SELECT source, COUNT(*) AS count
+                FROM scam_urls
+                GROUP BY source
+                ORDER BY count DESC
+                """
+            )
+            indicators_by_source = cur.fetchall()
+
+    return jsonify({
+        "ok": True,
+        "user": {
+            "id": user["id"],
+            "email": user["email"],
+            "name": user.get("name"),
+            "avatar_url": user.get("avatar_url"),
+            "plan": plan
+        },
+        "usage": {
+            "scans_used_today": scans_used_today,
+            "scan_limit": scan_limit
+        },
+        "total_scans": total_scans,
+        "recent_scans": recent_scans,
+        "reports": {
+            "by_status": reports_by_status
+        },
+        "database": {
+            "total_indicators": total_indicators,
+            "by_source": indicators_by_source
+        }
+    })
 
 # ============================================================
 # Scan API
@@ -1183,8 +1729,8 @@ def create_checkout_session():
         customer=customer_id,
         mode="subscription",
         line_items=[{"price": price_id, "quantity": 1}],
-        success_url=f"{APP_URL}/?billing=success",
-        cancel_url=f"{APP_URL}/?billing=cancelled",
+        success_url=f"{APP_URL}/dashboard?billing=success",
+        cancel_url=f"{APP_URL}/dashboard?billing=cancelled",
         metadata={
             "user_id": str(user["id"]),
             "plan": plan
