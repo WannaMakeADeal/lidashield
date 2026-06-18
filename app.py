@@ -13,6 +13,8 @@ from datetime import date
 import stripe
 import csv
 import io
+import re
+import json
 
 # ============================================================
 # LidaShield v1
@@ -611,6 +613,17 @@ def ensure_db():
         scan_date DATE DEFAULT CURRENT_DATE,
         scans_used INT DEFAULT 0,
         UNIQUE(user_id, scan_date)
+    );
+
+    CREATE TABLE IF NOT EXISTS message_checks (
+        id SERIAL PRIMARY KEY,
+        user_id INT REFERENCES users(id) ON DELETE SET NULL,
+        message TEXT NOT NULL,
+        verdict TEXT,
+        score INT DEFAULT 0,
+        reasons TEXT,
+        extracted_urls TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
     );
     """
 
@@ -1258,6 +1271,195 @@ def scan():
         **usage
     })
 
+
+
+# ============================================================
+# SMS / WhatsApp scam message checker
+# ============================================================
+
+URL_PATTERN = re.compile(r"""
+    (?:(?:https?://)?(?:www\.)?[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:/[^\s]*)?)
+""", re.VERBOSE)
+
+SHORTENER_DOMAINS = {
+    "bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd",
+    "buff.ly", "cutt.ly", "rebrand.ly", "s.id", "shorturl.at", "lnkd.in"
+}
+
+BANK_GOV_TERMS = [
+    "dbs", "posb", "ocbc", "uob", "maybank", "bank", "singpass", "cpf", "iras",
+    "mom", "ica", "gov.sg", "police", "singapore customs", "lta", "hdb"
+]
+
+URGENCY_TERMS = [
+    "urgent", "immediately", "within 24 hours", "limited time", "final warning",
+    "account suspended", "account locked", "verify now", "act now", "failure to",
+    "last chance", "blocked", "restricted"
+]
+
+CREDENTIAL_TERMS = [
+    "otp", "one time password", "password", "pin", "cvv", "login", "verify your account",
+    "authentication", "security code", "2fa", "passcode", "credentials"
+]
+
+MONEY_TERMS = [
+    "prize", "winner", "claim", "refund", "investment", "crypto", "usdt", "bitcoin",
+    "transfer", "fee", "loan", "grant", "parcel fee", "delivery fee", "compensation"
+]
+
+
+def extract_urls_from_text(text):
+    found = []
+    for match in URL_PATTERN.findall(text or ""):
+        cleaned = match.strip().rstrip(".,);!?'\"")
+        if "." in cleaned and cleaned not in found:
+            found.append(cleaned)
+    return found[:10]
+
+
+def domain_from_url(raw_url):
+    try:
+        normalized = normalize_url(raw_url)
+        return urlparse(normalized).netloc.lower()
+    except Exception:
+        return ""
+
+
+def contains_any(text, terms):
+    text_lower = (text or "").lower()
+    return [term for term in terms if term in text_lower]
+
+
+def analyze_scam_message(message):
+    text = message.strip()
+    text_lower = text.lower()
+    extracted_urls = extract_urls_from_text(text)
+
+    score = 0
+    reasons = []
+    database_hits = []
+
+    if extracted_urls:
+        score += 10
+        reasons.append("Message contains one or more links.")
+
+    urgency_hits = contains_any(text_lower, URGENCY_TERMS)
+    if urgency_hits:
+        score += 18
+        reasons.append("Uses urgency or pressure language.")
+
+    credential_hits = contains_any(text_lower, CREDENTIAL_TERMS)
+    if credential_hits:
+        score += 28
+        reasons.append("Mentions login details, OTP, password, PIN, or account verification.")
+
+    bank_gov_hits = contains_any(text_lower, BANK_GOV_TERMS)
+    if bank_gov_hits:
+        score += 18
+        reasons.append("Mentions a bank, government service, or official institution.")
+
+    money_hits = contains_any(text_lower, MONEY_TERMS)
+    if money_hits:
+        score += 18
+        reasons.append("Mentions money, refunds, prizes, fees, loans, parcels, crypto, or transfers.")
+
+    for url in extracted_urls:
+        domain = domain_from_url(url)
+        if domain in SHORTENER_DOMAINS:
+            score += 18
+            reasons.append(f"Uses a shortened link: {domain}.")
+
+        try:
+            normalized = normalize_url(url)
+            known = lookup_own_database(normalized)
+            if known:
+                hit = {
+                    "url": url,
+                    "normalized_url": normalized,
+                    "verdict": known.get("verdict"),
+                    "source": known.get("source"),
+                    "notes": known.get("notes")
+                }
+                database_hits.append(hit)
+
+                if known.get("verdict") == "dangerous":
+                    score += 70
+                    reasons.append(f"Link found in LidaShield verified threat database: {domain or url}.")
+                elif known.get("verdict") == "suspicious":
+                    score += 45
+                    reasons.append(f"Link found as suspicious in LidaShield database: {domain or url}.")
+        except Exception:
+            pass
+
+    if extracted_urls and len(text) < 90 and score < 35:
+        score += 10
+        reasons.append("Short message with a link, which is common in phishing attempts.")
+
+    score = min(100, score)
+
+    if score >= 75:
+        verdict = "dangerous"
+    elif score >= 45:
+        verdict = "suspicious"
+    elif score > 0:
+        verdict = "unknown"
+    else:
+        verdict = "safe"
+        reasons.append("No major scam signals were detected by LidaShield's zero-cost rules.")
+
+    return {
+        "verdict": verdict,
+        "score": score,
+        "reasons": reasons[:8],
+        "extracted_urls": extracted_urls,
+        "database_hits": database_hits,
+        "signal_count": max(0, len(reasons))
+    }
+
+
+def save_message_check(user_id, message, analysis):
+    if not DATABASE_URL:
+        return
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO message_checks
+                (user_id, message, verdict, score, reasons, extracted_urls)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    user_id,
+                    message,
+                    analysis.get("verdict"),
+                    analysis.get("score", 0),
+                    json.dumps(analysis.get("reasons", [])),
+                    json.dumps(analysis.get("extracted_urls", [])),
+                )
+            )
+
+
+@app.route("/check-message", methods=["POST"])
+def check_message():
+    data = request.get_json(silent=True) or {}
+    message = (data.get("message") or "").strip()
+
+    if not message:
+        return jsonify({"error": "Paste an SMS, WhatsApp message, or email text first."}), 400
+
+    if len(message) > 5000:
+        return jsonify({"error": "Message is too long. Keep it under 5000 characters."}), 400
+
+    user = get_current_user()
+    analysis = analyze_scam_message(message)
+    save_message_check(user["id"] if user else None, message, analysis)
+
+    return jsonify({
+        "ok": True,
+        "message": message,
+        **analysis
+    })
 
 
 # ============================================================
