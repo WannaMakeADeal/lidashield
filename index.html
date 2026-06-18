@@ -75,6 +75,34 @@ body::after{
   z-index:0;
 }
 
+/* 3D Starfield */
+.starfield-3d{
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  z-index:0;
+  perspective:1000px;
+  overflow:hidden;
+}
+
+.stars-container{
+  width:100%;
+  height:100%;
+  transform-style:preserve-3d;
+  position:relative;
+  will-change:transform;
+}
+
+.star-3d{
+  position:absolute;
+  width:2px;
+  height:2px;
+  background:var(--gold);
+  border-radius:50%;
+  box-shadow:0 0 4px rgba(240,168,48,.9);
+  transform-style:preserve-3d;
+}
+
 .page{
   position:relative;
   z-index:1;
@@ -1079,6 +1107,73 @@ h1 em{
   }
 }
 
+
+/* SMS / WhatsApp Checker */
+.message-check-shell{
+  width:min(920px,100%);
+  margin:0 auto;
+  padding:2px;
+  border-radius:30px;
+  background:linear-gradient(135deg, rgba(240,168,48,.30), rgba(255,255,255,.06), rgba(120,166,255,.16));
+  box-shadow:var(--shadow);
+}
+.message-checker{
+  border-radius:29px;
+  background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.025)), rgba(6,6,14,.93);
+  border:1px solid rgba(255,255,255,.08);
+  padding:36px;
+}
+.message-input{
+  width:100%;
+  min-height:150px;
+  resize:vertical;
+  padding:18px 20px;
+  border-radius:18px;
+  border:1.5px solid rgba(240,168,48,.22);
+  background:rgba(255,255,255,.05);
+  color:var(--text);
+  outline:none;
+  font-size:15px;
+  font-family:Inter,system-ui,sans-serif;
+  line-height:1.7;
+  transition:all .3s ease;
+}
+.message-input:focus{
+  border-color:rgba(240,168,48,.65);
+  background:rgba(255,255,255,.08);
+  box-shadow:0 0 0 4px rgba(240,168,48,.1);
+}
+.message-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:16px}
+.message-result-card{
+  display:none;
+  margin-top:24px;
+  border-top:1px solid rgba(240,168,48,.12);
+  padding-top:24px;
+  animation:slideDown .4s ease;
+}
+.message-result-card.show{display:block}
+.reason-list{display:flex;flex-direction:column;gap:10px;margin-top:18px}
+.reason{
+  padding:12px 14px;
+  border-radius:14px;
+  border:1px solid rgba(240,168,48,.18);
+  background:rgba(255,255,255,.04);
+  color:var(--muted);
+  font-size:13px;
+  line-height:1.6;
+  transition:all .2s ease;
+}
+.reason:hover{
+  background:rgba(255,255,255,.07);
+  border-color:rgba(240,168,48,.28);
+}
+.message-note{
+  margin-top:16px;
+  color:var(--muted);
+  font-size:13px;
+  line-height:1.7;
+}
+
 .brand-logo-img{
   width:42px;
   height:42px;
@@ -1090,6 +1185,10 @@ h1 em{
 </head>
 
 <body>
+<div class="starfield-3d" id="starfield3d">
+  <div class="stars-container" id="starsContainer"></div>
+</div>
+
 <div class="page">
 
   <nav class="nav">
@@ -1199,6 +1298,78 @@ h1 em{
     </section>
   </main>
 
+
+  <section id="message-checker" class="section">
+    <div class="section-inner">
+      <div class="section-head">
+        <div class="section-kicker">WhatsApp / SMS Protection</div>
+        <div class="section-title">Check a suspicious message</div>
+      </div>
+
+      <section class="message-check-shell">
+        <div class="message-checker">
+          <div class="scanner-top">
+            <div>
+              <div class="scanner-title">Paste the message here</div>
+              <div class="scanner-small">Zero-cost scam signal analysis + LidaShield URL database matching</div>
+            </div>
+            <div class="status-chip">Beta</div>
+          </div>
+
+          <textarea id="messageInput" class="message-input" placeholder="Example: DBS Alert: Your account will be suspended within 24 hours. Verify your OTP and login here..."></textarea>
+
+          <div class="message-actions">
+            <button id="messageCheckBtn" class="btn gold">Check Message</button>
+            <button class="btn" onclick="document.getElementById('messageInput').value=''">Clear</button>
+          </div>
+
+          <div id="messageLoading" class="loading">
+            <div class="spinner"></div>
+            Checking message patterns and LidaShield database links...
+          </div>
+
+          <div id="messageResult" class="message-result-card">
+            <div class="verdict-line">
+              <div class="verdict-left">
+                <div id="messageOrb" class="verdict-orb"></div>
+                <div id="messageVerdict" class="verdict-text">Unknown</div>
+              </div>
+              <div class="source-pill">Message analysis</div>
+            </div>
+
+            <div class="stats">
+              <div class="stat">
+                <div id="messageScore" class="stat-num">0</div>
+                <div class="stat-label">Risk score</div>
+              </div>
+              <div class="stat">
+                <div id="messageLinks" class="stat-num">0</div>
+                <div class="stat-label">Links found</div>
+              </div>
+              <div class="stat">
+                <div id="messageSignals" class="stat-num">0</div>
+                <div class="stat-label">Signals</div>
+              </div>
+              <div class="stat">
+                <div id="messageDbHits" class="stat-num">0</div>
+                <div class="stat-label">DB hits</div>
+              </div>
+            </div>
+
+            <div class="flagged">
+              <div class="flagged-title">Why LidaShield gave this result</div>
+              <div id="messageReasons" class="reason-list"></div>
+            </div>
+
+            <div class="message-note">
+              This checker is a zero-cost beta. It does not replace human judgment, but it helps identify common scam patterns and links already found in the LidaShield database.
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </section>
+
   <section class="section">
     <div class="section-inner">
       <div class="section-head">
@@ -1305,6 +1476,93 @@ let currentUser = null;
 let lastScannedUrl = "";
 
 const $ = (id) => document.getElementById(id);
+
+// ============================================================
+// 3D Interactive Starfield with Idle Animation
+// ============================================================
+
+function createStarfield3D(){
+  const container = $("starsContainer");
+  const starCount = 150;
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  
+  const stars = [];
+  
+  for(let i = 0; i < starCount; i++){
+    const star = document.createElement("div");
+    star.className = "star-3d";
+    
+    const x = Math.random() * width;
+    const y = Math.random() * height;
+    const z = Math.random() * 1000 - 500;
+    
+    star.style.left = x + "px";
+    star.style.top = y + "px";
+    star.style.transform = `translateZ(${z}px)`;
+    
+    container.appendChild(star);
+    
+    stars.push({
+      element: star,
+      x: x,
+      y: y,
+      z: z,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: (Math.random() - 0.5) * 0.5,
+      vz: (Math.random() - 0.5) * 2
+    });
+  }
+  
+  let mouseX = width / 2;
+  let mouseY = height / 2;
+  let targetRotX = 0;
+  let targetRotY = 0;
+  let rotX = 0;
+  let rotY = 0;
+  let time = 0;
+  
+  // Idle animation: gentle continuous rotation
+  function updateIdleRotation(){
+    time += 0.003;
+    targetRotX = Math.sin(time) * 8;
+    targetRotY = Math.cos(time * 0.7) * 12;
+  }
+  
+  document.addEventListener("mousemove", (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    
+    // Blend mouse direction into the target
+    const mouseRotY = (mouseX / width - 0.5) * 20;
+    const mouseRotX = (mouseY / height - 0.5) * -20;
+    
+    targetRotY = mouseRotY;
+    targetRotX = mouseRotX;
+  });
+  
+  function animate(){
+    // Always update idle rotation
+    updateIdleRotation();
+    
+    // Smooth interpolation - always rotating
+    rotX += (targetRotX - rotX) * 0.08;
+    rotY += (targetRotY - rotY) * 0.08;
+    
+    const starsContainer = $("starsContainer");
+    starsContainer.style.transform = `rotateX(${rotX}deg) rotateY(${rotY}deg)`;
+    
+    requestAnimationFrame(animate);
+  }
+  
+  animate();
+}
+
+createStarfield3D();
+
+// ============================================================
+// User Auth
+// ============================================================
 
 async function loadMe(){
   try{
@@ -1520,6 +1778,60 @@ function showResult(data){
   }
 }
 
+async function checkMessage(){
+  const message = $("messageInput").value.trim();
+
+  if(!message){
+    showError("Paste a suspicious SMS, WhatsApp message, or email text first.");
+    document.getElementById("message-checker").scrollIntoView();
+    return;
+  }
+
+  clearError();
+  $("messageResult").classList.remove("show");
+  $("messageLoading").classList.add("show");
+  $("messageCheckBtn").disabled = true;
+
+  try{
+    const res = await fetch("/check-message", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({message})
+    });
+
+    const data = await res.json();
+
+    if(!res.ok){
+      throw new Error(data.details || data.error || "Message check failed.");
+    }
+
+    showMessageResult(data);
+  }catch(e){
+    showError(e.message || "Message check failed.");
+  }finally{
+    $("messageLoading").classList.remove("show");
+    $("messageCheckBtn").disabled = false;
+  }
+}
+
+function showMessageResult(data){
+  const verdict = data.verdict || "unknown";
+  $("messageResult").classList.add("show");
+  $("messageOrb").className = `verdict-orb ${verdict}`;
+  $("messageVerdict").textContent = verdict;
+  $("messageScore").textContent = data.score ?? 0;
+  $("messageLinks").textContent = (data.extracted_urls || []).length;
+  $("messageSignals").textContent = data.signal_count ?? 0;
+  $("messageDbHits").textContent = (data.database_hits || []).length;
+
+  const reasons = data.reasons || [];
+  if(reasons.length === 0){
+    $("messageReasons").innerHTML = `<div class="reason">No major scam signals detected.</div>`;
+  }else{
+    $("messageReasons").innerHTML = reasons.map(reason => `<div class="reason">${escapeHtml(reason)}</div>`).join("");
+  }
+}
+
 async function reportCurrent(){
   const url = lastScannedUrl || $("urlInput").value.trim();
 
@@ -1583,6 +1895,10 @@ $("urlInput").addEventListener("keydown", (e) => {
     scanUrl();
   }
 });
+
+if($("messageCheckBtn")){
+  $("messageCheckBtn").addEventListener("click", checkMessage);
+}
 
 $("reportBtn").addEventListener("click", reportCurrent);
 
