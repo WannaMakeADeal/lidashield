@@ -553,6 +553,30 @@ async function loadDashboard(){
   }
 }
 
+function resetCheckoutState(){
+  const overlay = $("checkoutOverlay");
+
+  if(overlay){
+    overlay.classList.remove("show");
+  }
+
+  document.querySelectorAll("button, .btn").forEach(el => {
+    if(el.dataset.originalText){
+      el.textContent = el.dataset.originalText;
+      el.disabled = false;
+      delete el.dataset.originalText;
+    }
+  });
+}
+
+window.addEventListener("pageshow", resetCheckoutState);
+window.addEventListener("focus", resetCheckoutState);
+document.addEventListener("visibilitychange", () => {
+  if(!document.hidden){
+    resetCheckoutState();
+  }
+});
+
 async function upgrade(plan){
   const overlay = $("checkoutOverlay");
 
