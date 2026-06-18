@@ -332,6 +332,13 @@ h1{
 .action h3{font-size:17px;margin-bottom:10px}
 .action p{font-size:13px;line-height:1.7;color:var(--muted);margin-bottom:16px}
 .error{color:#ff9ca4}
+.checkout-overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(3,3,10,.72);backdrop-filter:blur(18px);z-index:999}
+.checkout-overlay.show{display:flex}
+.checkout-card{width:min(420px,90%);border:1px solid rgba(240,168,48,.28);background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.035));border-radius:26px;padding:34px;text-align:center;box-shadow:0 30px 90px rgba(0,0,0,.55)}
+.checkout-card h3{font-family:Cormorant Garamond,serif;font-size:34px;font-weight:500;margin-bottom:10px}
+.checkout-card p{color:var(--muted);font-size:13px;line-height:1.7}
+.checkout-spinner{width:30px;height:30px;margin:0 auto 18px;border-radius:50%;border:3px solid rgba(240,168,48,.18);border-top-color:var(--gold);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 @media(max-width:900px){
   .nav{padding:0 18px}
   .hero{flex-direction:column;align-items:stretch}
@@ -346,6 +353,14 @@ h1{
 </style>
 </head>
 <body>
+<div id="checkoutOverlay" class="checkout-overlay">
+  <div class="checkout-card">
+    <div class="checkout-spinner"></div>
+    <h3>Preparing checkout</h3>
+    <p>LidaShield is opening Stripe's secure payment page. This can take a moment in sandbox mode.</p>
+  </div>
+</div>
+
 <div class="page">
   <nav class="nav">
     <a class="brand" href="/">
@@ -539,7 +554,21 @@ async function loadDashboard(){
 }
 
 async function upgrade(plan){
+  const overlay = $("checkoutOverlay");
+
   try{
+    if(overlay){
+      overlay.classList.add("show");
+    }
+
+    document.querySelectorAll("button, .btn").forEach(el => {
+      if(el.textContent.toLowerCase().includes("upgrade")){
+        el.dataset.originalText = el.textContent;
+        el.textContent = "Preparing checkout...";
+        el.disabled = true;
+      }
+    });
+
     const res = await fetch("/create-checkout-session", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -554,6 +583,17 @@ async function upgrade(plan){
 
     window.location.href = data.url;
   }catch(e){
+    if(overlay){
+      overlay.classList.remove("show");
+    }
+
+    document.querySelectorAll("button, .btn").forEach(el => {
+      if(el.dataset.originalText){
+        el.textContent = el.dataset.originalText;
+        el.disabled = false;
+      }
+    });
+
     alert(e.message || "Stripe checkout is not ready yet.");
   }
 }
