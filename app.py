@@ -434,8 +434,13 @@ h1{
       </div>
       <div class="action">
         <h3>Upgrade protection</h3>
-        <p>Unlock more scans, saved history, and early access to SMS checking.</p>
+        <p>Unlock full explanations, saved history, and higher scan limits.</p>
         <button class="btn gold" onclick="upgrade('shield')">Upgrade Shield</button>
+      </div>
+      <div class="action">
+        <h3>Manage subscription</h3>
+        <p>Open Stripe's secure billing portal to update, cancel, or manage your plan.</p>
+        <button class="btn" onclick="manageBilling()">Manage billing</button>
       </div>
       <div class="action">
         <h3>Admin intelligence</h3>
@@ -619,6 +624,26 @@ async function upgrade(plan){
     });
 
     alert(e.message || "Stripe checkout is not ready yet.");
+  }
+}
+
+
+async function manageBilling(){
+  try{
+    const res = await fetch("/billing/portal", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"}
+    });
+
+    const data = await res.json();
+
+    if(!res.ok){
+      throw new Error(data.error || "Could not open billing portal.");
+    }
+
+    window.location.href = data.url;
+  }catch(e){
+    alert(e.message || "Billing portal is not ready yet.");
   }
 }
 
@@ -2089,6 +2114,44 @@ def create_checkout_session():
     )
 
     return jsonify({"url": checkout.url})
+
+
+@app.route("/billing/portal", methods=["POST"])
+def billing_portal():
+    """
+    Opens Stripe Customer Portal so paid users can manage/cancel subscriptions.
+    This is needed before real customers because SaaS users expect self-service billing.
+    """
+
+    user = get_current_user()
+
+    if not user:
+        return jsonify({"error": "Please sign in first."}), 401
+
+    if not STRIPE_SECRET_KEY:
+        return jsonify({"error": "Stripe is not configured yet."}), 500
+
+    customer_id = user.get("stripe_customer_id")
+
+    if not customer_id:
+        return jsonify({
+            "error": "No Stripe customer found for this account yet. Upgrade first, then billing management will become available."
+        }), 400
+
+    try:
+        portal = stripe.billing_portal.Session.create(
+            customer=customer_id,
+            return_url=f"{APP_URL}/dashboard"
+        )
+
+        return jsonify({"url": portal.url})
+
+    except Exception as e:
+        app.logger.exception("Billing portal failed")
+        return jsonify({
+            "error": "Could not open Stripe billing portal.",
+            "details": str(e)
+        }), 500
 
 
 @app.route("/billing/success")
