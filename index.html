@@ -1410,7 +1410,7 @@ h1 em{
           <div class="scanner-top">
             <div>
               <div class="scanner-title">2. Message checker</div>
-              <div class="scanner-small">Zero-cost scam signal analysis + LidaShield URL database matching</div>
+              <div class="scanner-small">Scam-signal analysis + LidaShield URL database matching</div>
             </div>
             <div class="status-chip">Beta</div>
           </div>
@@ -1468,7 +1468,7 @@ h1 em{
             </div>
 
             <div class="message-note">
-              This checker is a zero-cost beta. It does not replace human judgment, but it helps identify common scam patterns and links already found in the LidaShield database.
+              This analysis uses LidaShield’s scam-signal engine and verified URL database. It does not replace human judgment, but it helps identify common scam patterns.
             </div>
           </div>
         </div>
@@ -1588,10 +1588,10 @@ h1 em{
           <div class="plan-list">
             <div>Very high scan limit</div>
             <div>Priority features</div>
-            <div>Future API access</div>
-            <div>Business security tools</div>
+            <div>API access coming soon</div>
+            <div>Business tools coming soon</div>
           </div>
-          <button class="btn" onclick="upgrade('pro')">Upgrade to Pro</button>
+          <button class="btn" disabled style="pointer-events:none;opacity:.65;">Coming soon</button>
         </div>
       </div>
     </div>
@@ -1706,14 +1706,28 @@ function updatePlanButtons(){
   document.querySelectorAll("button, a.btn").forEach(el => {
     const txt = (el.textContent || "").toLowerCase();
 
-    if(plan === "shield" && (txt.includes("upgrade to shield") || txt.includes("unlock shield") || txt.includes("start free"))){
-      el.textContent = txt.includes("start free") ? "Current account" : "Current plan";
+    if(txt.includes("start free")){
+      el.textContent = "Current account";
       el.disabled = true;
       el.style.pointerEvents = "none";
       el.style.opacity = ".65";
     }
 
-    if(plan === "pro" && txt.includes("upgrade")){
+    if(plan === "shield" && (txt.includes("upgrade to shield") || txt.includes("unlock shield"))){
+      el.textContent = "Current plan";
+      el.disabled = true;
+      el.style.pointerEvents = "none";
+      el.style.opacity = ".65";
+    }
+
+    if(plan === "pro" && (txt.includes("upgrade to shield") || txt.includes("unlock shield"))){
+      el.textContent = "Included in Pro";
+      el.disabled = true;
+      el.style.pointerEvents = "none";
+      el.style.opacity = ".65";
+    }
+
+    if(plan === "pro" && txt.includes("coming soon")){
       el.textContent = "Current plan";
       el.disabled = true;
       el.style.pointerEvents = "none";
@@ -1802,6 +1816,18 @@ function showError(message){
 function clearError(){
   $("errorBox").textContent = "";
   $("errorBox").classList.remove("show");
+}
+
+function displayVerdict(verdict){
+  if(verdict === "safe"){
+    return "Low risk";
+  }
+
+  if(verdict === "unknown"){
+    return "Unknown";
+  }
+
+  return verdict || "Unknown";
 }
 
 function formatSourceLabel(data){
@@ -1904,7 +1930,7 @@ function showResult(data){
   $("result").classList.add("show");
 
   $("verdictOrb").className = `verdict-orb ${verdict}`;
-  $("verdictText").textContent = verdict;
+  $("verdictText").textContent = displayVerdict(verdict);
   $("sourcePill").textContent = formatSourceLabel(data);
 
   $("resultUrl").textContent = data.normalized_url || data.url || "";
@@ -1978,7 +2004,7 @@ function showMessageResult(data){
   const verdict = data.verdict || "unknown";
   $("messageResult").classList.add("show");
   $("messageOrb").className = `verdict-orb ${verdict}`;
-  $("messageVerdict").textContent = verdict;
+  $("messageVerdict").textContent = displayVerdict(verdict);
   $("messageScore").textContent = data.score ?? 0;
   $("messageLinks").textContent = (data.extracted_urls || []).length;
   $("messageSignals").textContent = data.signal_count ?? 0;
