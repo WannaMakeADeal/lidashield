@@ -38,7 +38,7 @@ STRIPE_PRICE_PRO = os.environ.get("STRIPE_PRICE_PRO", "")
 
 APP_URL = os.environ.get("APP_URL", "http://localhost:5000").rstrip("/")
 FLASK_SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "change-this-secret-key")
-ADMIN_IMPORT_KEY = os.environ.get("ADMIN_IMPORT_KEY", "")
+ADMIN_EMAILS = os.environ.get("ADMIN_EMAILS", "")
 
 app.secret_key = FLASK_SECRET_KEY
 @app.errorhandler(Exception)
@@ -235,6 +235,55 @@ def get_current_user():
                 return cur.fetchone()
     except Exception:
         return None
+
+
+def admin_email_set():
+    return {
+        email.strip().lower()
+        for email in ADMIN_EMAILS.split(",")
+        if email.strip()
+    }
+
+
+def is_admin(user=None):
+    if user is None:
+        user = get_current_user()
+
+    if not user:
+        return False
+
+    allowed = admin_email_set()
+    email = (user.get("email") or "").lower()
+
+    return bool(email and email in allowed)
+
+
+def require_admin():
+    user = get_current_user()
+
+    if not user:
+        session["next_url"] = request.full_path if request.query_string else request.path
+        return None, redirect(url_for("login"))
+
+    if not ADMIN_EMAILS:
+        return None, (
+            jsonify({
+                "error": "ADMIN_EMAILS is not configured in Render.",
+                "fix": "Add ADMIN_EMAILS with your Google account email, then redeploy."
+            }),
+            500
+        )
+
+    if not is_admin(user):
+        return None, (
+            jsonify({
+                "error": "Forbidden.",
+                "details": "Your signed-in Google email is not listed in ADMIN_EMAILS."
+            }),
+            403
+        )
+
+    return user, None
 
 
 def get_plan_limit(plan):
@@ -507,6 +556,10 @@ def login():
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
         return "Google OAuth is not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Render.", 500
 
+    next_url = request.args.get("next")
+    if next_url and next_url.startswith("/"):
+        session["next_url"] = next_url
+
     redirect_uri = url_for("auth_callback", _external=True)
     return oauth.google.authorize_redirect(redirect_uri)
 
@@ -545,7 +598,8 @@ def auth_callback():
             user = cur.fetchone()
 
     session["user_id"] = user["id"]
-    return redirect("/")
+    next_url = session.pop("next_url", "/")
+    return redirect(next_url)
 
 
 @app.route("/logout")
@@ -786,24 +840,22 @@ def import_openphish(cur, limit):
 @app.route("/admin/import-feeds")
 def admin_import_feeds():
     """
-    Protected admin-only route for importing free threat feeds into LidaShield.
+    Admin-only route for importing free threat feeds into LidaShield.
+
+    Security model:
+    - User must sign in with Google.
+    - User's email must be listed in ADMIN_EMAILS in Render.
 
     Example:
-    /admin/import-feeds?key=YOUR_ADMIN_IMPORT_KEY&limit=500
+    /admin/import-feeds?limit=500
     """
 
-    if not ADMIN_IMPORT_KEY:
-        return jsonify({
-            "error": "ADMIN_IMPORT_KEY is not configured in Render."
-        }), 500
-
-    provided_key = request.args.get("key", "")
-
-    if provided_key != ADMIN_IMPORT_KEY:
-        return jsonify({"error": "Unauthorized."}), 401
+    admin_user, admin_error = require_admin()
+    if admin_error:
+        return admin_error
 
     try:
-        limit = int(request.args.get("limit", "500"))
+        limit = int(request.args.get("limit", "250"))
     except ValueError:
         limit = 500
 
@@ -843,18 +895,13 @@ def admin_import_feeds():
 @app.route("/admin/database-stats")
 def admin_database_stats():
     """
-    Protected admin route for checking database size.
+    Admin route for checking database size.
+    Requires Google sign-in and ADMIN_EMAILS match.
     """
 
-    if not ADMIN_IMPORT_KEY:
-        return jsonify({
-            "error": "ADMIN_IMPORT_KEY is not configured in Render."
-        }), 500
-
-    provided_key = request.args.get("key", "")
-
-    if provided_key != ADMIN_IMPORT_KEY:
-        return jsonify({"error": "Unauthorized."}), 401
+    admin_user, admin_error = require_admin()
+    if admin_error:
+        return admin_error
 
     with get_db() as conn:
         with conn.cursor() as cur:
