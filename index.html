@@ -1117,7 +1117,7 @@ h1 em{
 
     <p class="hero-copy">
       Paste a suspicious URL from WhatsApp, SMS, email, or social media.
-      LidaShield checks its verified scam database first. User reports are stored for review and do not instantly affect public verdicts.
+      LidaShield checks its verified scam database first. Unknown links are not called suspicious unless verified evidence exists.
     </p>
 
     <section class="scanner-shell">
@@ -1395,6 +1395,10 @@ function formatSourceLabel(data){
     return "Not in database";
   }
 
+  if(data.source === "urlhaus" || data.source === "openphish"){
+    return "Verified threat feed";
+  }
+
   return data.source || "LidaShield check";
 }
 
@@ -1471,7 +1475,7 @@ function showResult(data){
 
     const flagged = data.flagged || [];
     if(flagged.length === 0){
-      $("flagList").innerHTML = `<span class="flag">No verified evidence yet</span>`;
+      $("flagList").innerHTML = `<span class="flag">No verified scam evidence yet</span>`;
     }else{
       $("flagList").innerHTML = flagged.map(name => {
         return `<span class="flag">${escapeHtml(name)}</span>`;
