@@ -429,7 +429,7 @@ h1{
       </div>
       <div class="action">
         <h3>Check a message</h3>
-        <p>Analyze a suspicious SMS or WhatsApp message using LidaShield's zero-cost signal engine.</p>
+        <p>Analyze a suspicious SMS or WhatsApp message using LidaShield's scam-signal engine.</p>
         <a class="btn gold" href="/#message-checker">Open message checker</a>
       </div>
       <div class="action">
@@ -437,12 +437,12 @@ h1{
         <p>Unlock full explanations, saved history, and higher scan limits.</p>
         <button class="btn gold" onclick="upgrade('shield')">Upgrade Shield</button>
       </div>
-      <div class="action">
+      <div id="billingAction" class="action" style="display:none;">
         <h3>Manage subscription</h3>
         <p>Open Stripe's secure billing portal to update, cancel, or manage your plan.</p>
         <button class="btn" onclick="manageBilling()">Manage billing</button>
       </div>
-      <div class="action">
+      <div id="adminAction" class="action" style="display:none;">
         <h3>Admin intelligence</h3>
         <p>Admin-only database tools for feed import and intelligence growth.</p>
         <a class="btn" href="/admin/database-stats">Database stats</a>
@@ -514,6 +514,14 @@ async function loadDashboard(){
 
     if(data.user.avatar_url){
       $("avatar").src = data.user.avatar_url;
+    }
+
+    if($("adminAction") && data.admin && data.admin.is_admin){
+      $("adminAction").style.display = "block";
+    }
+
+    if($("billingAction") && (currentPlan === "shield" || currentPlan === "pro")){
+      $("billingAction").style.display = "block";
     }
 
     $("scansToday").textContent = data.usage.scans_used_today || 0;
@@ -642,7 +650,25 @@ async function upgrade(plan){
 
 
 async function manageBilling(){
+  const overlay = $("checkoutOverlay");
+
   try{
+    if(overlay){
+      overlay.classList.add("show");
+      const title = overlay.querySelector("h3");
+      const copy = overlay.querySelector("p");
+      if(title){ title.textContent = "Opening billing portal"; }
+      if(copy){ copy.textContent = "LidaShield is opening Stripe's secure subscription management page."; }
+    }
+
+    document.querySelectorAll("button, .btn").forEach(el => {
+      if(el.textContent.toLowerCase().includes("manage billing")){
+        el.dataset.originalText = el.textContent;
+        el.textContent = "Opening billing...";
+        el.disabled = true;
+      }
+    });
+
     const res = await fetch("/billing/portal", {
       method:"POST",
       headers:{"Content-Type":"application/json"}
@@ -656,6 +682,7 @@ async function manageBilling(){
 
     window.location.href = data.url;
   }catch(e){
+    resetCheckoutState();
     alert(e.message || "Billing portal is not ready yet.");
   }
 }
@@ -1349,6 +1376,9 @@ def api_dashboard():
             "name": user.get("name"),
             "avatar_url": user.get("avatar_url"),
             "plan": plan
+        },
+        "admin": {
+            "is_admin": is_admin(user)
         },
         "usage": {
             "scans_used_today": scans_used_today,
