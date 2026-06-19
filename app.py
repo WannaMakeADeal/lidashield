@@ -444,8 +444,9 @@ h1{
       </div>
       <div id="adminAction" class="action" style="display:none;">
         <h3>Admin intelligence</h3>
-        <p>Admin-only database tools for feed import and intelligence growth.</p>
-        <a class="btn" href="/admin/database-stats">Database stats</a>
+        <p>Admin-only database tools for report review and intelligence growth.</p>
+        <a class="btn gold" href="/admin/reports">Review reports</a>
+        <a class="btn" href="/admin/database-stats" style="margin-left:8px;">Database stats</a>
       </div>
     </section>
 
@@ -792,6 +793,9 @@ def ensure_db():
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(schema)
+            cur.execute("ALTER TABLE scam_reports ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP")
+            cur.execute("ALTER TABLE scam_reports ADD COLUMN IF NOT EXISTS reviewed_by INT REFERENCES users(id) ON DELETE SET NULL")
+            cur.execute("ALTER TABLE scam_reports ADD COLUMN IF NOT EXISTS review_notes TEXT")
 
     _db_ready = True
 
@@ -1952,6 +1956,278 @@ def admin_import_test_record():
             "details": str(e),
             "type": type(e).__name__
         }), 500
+
+
+
+@app.route("/admin/reports")
+def admin_reports_page():
+    """Admin UI for reviewing user-submitted scam reports."""
+
+    admin_user, admin_error = require_admin()
+    if admin_error:
+        return admin_error
+
+    return """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LidaShield Admin Reports</title>
+  <style>
+    :root{--bg:#050816;--panel:#0b1024;--panel2:#111735;--text:#f8fafc;--muted:#94a3b8;--gold:#facc15;--line:rgba(255,255,255,.11);--red:#ef4444;--green:#22c55e;--blue:#38bdf8;}
+    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at top,#111827 0,#050816 48%,#020617 100%);color:var(--text);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh;padding:24px;}
+    .wrap{max-width:1100px;margin:0 auto}.top{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:22px}.brand{font-weight:900;font-size:24px}.brand span{color:var(--gold)}
+    a{color:inherit}.btn{border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--text);padding:10px 14px;border-radius:14px;text-decoration:none;cursor:pointer;font-weight:800}.btn.gold{background:linear-gradient(135deg,#fde047,#f59e0b);color:#111827;border:0}.btn.danger{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35)}.btn:disabled{opacity:.55;cursor:not-allowed}
+    .card{background:linear-gradient(180deg,rgba(17,24,39,.9),rgba(15,23,42,.82));border:1px solid var(--line);border-radius:24px;padding:20px;box-shadow:0 20px 70px rgba(0,0,0,.35)}
+    .controls{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 18px}.pill{padding:8px 12px;border:1px solid var(--line);border-radius:999px;cursor:pointer;color:var(--muted);font-weight:800}.pill.active{background:rgba(250,204,21,.16);color:var(--gold);border-color:rgba(250,204,21,.35)}
+    .report{border:1px solid var(--line);border-radius:18px;padding:16px;background:rgba(255,255,255,.04);margin:12px 0}.report-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.url{font-weight:900;word-break:break-all}.meta,.msg{color:var(--muted);font-size:14px;line-height:1.6}.badge{display:inline-flex;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:900;text-transform:uppercase}.pending{background:rgba(250,204,21,.14);color:#fde047}.approved{background:rgba(34,197,94,.14);color:#86efac}.rejected{background:rgba(239,68,68,.14);color:#fca5a5}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.empty{color:var(--muted);padding:20px;text-align:center}.loader{display:none;color:var(--gold);font-weight:900;margin:12px 0}.loader.show{display:block}
+    textarea{width:100%;margin-top:10px;background:#020617;color:var(--text);border:1px solid var(--line);border-radius:14px;padding:10px;min-height:70px;resize:vertical}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <div class="brand">Lida<span>Shield</span> Admin</div>
+        <div class="meta">Review user reports before they enter the verified scam database.</div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;">
+        <a class="btn" href="/dashboard">Dashboard</a>
+        <a class="btn" href="/admin/database-stats">Database stats</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0;">Report review queue</h2>
+      <div class="meta">Approve only when the report looks genuinely suspicious. Rejected reports never enter scam_urls.</div>
+      <div class="controls">
+        <button class="pill active" data-status="pending">Pending</button>
+        <button class="pill" data-status="approved">Approved</button>
+        <button class="pill" data-status="rejected">Rejected</button>
+      </div>
+      <div id="loader" class="loader">Loading reports...</div>
+      <div id="reports"></div>
+    </div>
+  </div>
+
+<script>
+let currentStatus = "pending";
+const $ = id => document.getElementById(id);
+
+function escapeHtml(text){
+  return String(text || "").replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;","\"":"&quot;"}[ch]));
+}
+
+function badge(status){
+  const s = status || "pending";
+  return `<span class="badge ${s}">${escapeHtml(s)}</span>`;
+}
+
+async function loadReports(){
+  $("loader").classList.add("show");
+  $("reports").innerHTML = "";
+  try{
+    const res = await fetch(`/admin/api/reports?status=${encodeURIComponent(currentStatus)}`);
+    const data = await res.json();
+    if(!res.ok){ throw new Error(data.error || "Could not load reports."); }
+
+    if(!data.reports || data.reports.length === 0){
+      $("reports").innerHTML = `<div class="empty">No ${escapeHtml(currentStatus)} reports.</div>`;
+      return;
+    }
+
+    $("reports").innerHTML = data.reports.map(r => {
+      const canAct = r.status === "pending";
+      const url = r.url || r.normalized_url || "Message-only report";
+      return `
+        <div class="report" id="report-${r.id}">
+          <div class="report-head">
+            <div class="url">${escapeHtml(url)}</div>
+            <div>${badge(r.status)}</div>
+          </div>
+          <div class="meta">Category: ${escapeHtml(r.category || "url")} · Submitted: ${escapeHtml(r.created_at || "")}</div>
+          <div class="msg">${escapeHtml(r.message || "No message provided.")}</div>
+          ${r.review_notes ? `<div class="msg"><b>Review notes:</b> ${escapeHtml(r.review_notes)}</div>` : ""}
+          ${canAct ? `
+            <textarea id="notes-${r.id}" placeholder="Optional admin notes, e.g. phishing page, impersonation, fake login, etc."></textarea>
+            <div class="actions">
+              <button class="btn gold" onclick="approveReport(${r.id})">Approve into database</button>
+              <button class="btn danger" onclick="rejectReport(${r.id})">Reject</button>
+            </div>` : ""}
+        </div>`;
+    }).join("");
+  }catch(e){
+    $("reports").innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+  }finally{
+    $("loader").classList.remove("show");
+  }
+}
+
+async function approveReport(id){
+  const notes = $(`notes-${id}`)?.value || "";
+  if(!confirm("Approve this report and add it to scam_urls?")){ return; }
+  await act(id, "approve", notes);
+}
+
+async function rejectReport(id){
+  const notes = $(`notes-${id}`)?.value || "";
+  if(!confirm("Reject this report?")){ return; }
+  await act(id, "reject", notes);
+}
+
+async function act(id, action, notes){
+  try{
+    const buttons = document.querySelectorAll(`#report-${id} button`);
+    buttons.forEach(b => b.disabled = true);
+    const res = await fetch(`/admin/api/reports/${id}/${action}`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({notes})
+    });
+    const data = await res.json();
+    if(!res.ok){ throw new Error(data.error || "Action failed."); }
+    await loadReports();
+  }catch(e){
+    alert(e.message || "Action failed.");
+    await loadReports();
+  }
+}
+
+document.querySelectorAll(".pill").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".pill").forEach(p => p.classList.remove("active"));
+    btn.classList.add("active");
+    currentStatus = btn.dataset.status;
+    loadReports();
+  });
+});
+
+loadReports();
+</script>
+</body>
+</html>
+    """
+
+
+@app.route("/admin/api/reports")
+def admin_api_reports():
+    admin_user, admin_error = require_admin()
+    if admin_error:
+        return admin_error
+
+    status = (request.args.get("status") or "pending").lower().strip()
+    if status not in ("pending", "approved", "rejected"):
+        return jsonify({"error": "Invalid status."}), 400
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT r.id, r.url, r.normalized_url, r.message, r.category, r.status,
+                       r.created_at, r.reviewed_at, r.review_notes,
+                       u.email AS reporter_email
+                FROM scam_reports r
+                LEFT JOIN users u ON u.id = r.user_id
+                WHERE r.status = %s
+                ORDER BY r.created_at DESC
+                LIMIT 100
+                """,
+                (status,)
+            )
+            reports = cur.fetchall()
+
+    return jsonify({"ok": True, "status": status, "reports": reports})
+
+
+@app.route("/admin/api/reports/<int:report_id>/approve", methods=["POST"])
+def admin_api_approve_report(report_id):
+    admin_user, admin_error = require_admin()
+    if admin_error:
+        return admin_error
+
+    data = request.get_json(silent=True) or {}
+    notes = (data.get("notes") or "Approved by LidaShield admin review.").strip()
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM scam_reports WHERE id = %s FOR UPDATE", (report_id,))
+            report = cur.fetchone()
+
+            if not report:
+                return jsonify({"error": "Report not found."}), 404
+
+            if report.get("status") != "pending":
+                return jsonify({"error": "Only pending reports can be approved."}), 400
+
+            raw_url = report.get("url") or report.get("normalized_url")
+            if not raw_url:
+                return jsonify({"error": "This report has no URL, so it cannot be inserted into scam_urls yet. Reject it or review manually."}), 400
+
+            try:
+                normalized_url = normalize_url(raw_url)
+            except ValueError:
+                return jsonify({"error": "Report URL is invalid and cannot be approved into scam_urls."}), 400
+
+            admin_notes = f"User report #{report_id} approved by admin. {notes}"
+            if report.get("message"):
+                admin_notes += f" User message: {report.get('message')[:300]}"
+
+            upsert_scam_indicator(
+                cur,
+                url=raw_url,
+                verdict="dangerous",
+                source="user_report_reviewed",
+                notes=admin_notes,
+                malicious=2,
+                suspicious=4,
+                harmless=0,
+                undetected=0,
+            )
+
+            cur.execute(
+                """
+                UPDATE scam_reports
+                SET status = 'approved', reviewed_at = NOW(), reviewed_by = %s, review_notes = %s,
+                    normalized_url = COALESCE(normalized_url, %s)
+                WHERE id = %s
+                """,
+                (admin_user["id"], notes, normalized_url, report_id)
+            )
+
+    return jsonify({"ok": True, "message": "Report approved and added to scam_urls."})
+
+
+@app.route("/admin/api/reports/<int:report_id>/reject", methods=["POST"])
+def admin_api_reject_report(report_id):
+    admin_user, admin_error = require_admin()
+    if admin_error:
+        return admin_error
+
+    data = request.get_json(silent=True) or {}
+    notes = (data.get("notes") or "Rejected by LidaShield admin review.").strip()
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM scam_reports WHERE id = %s FOR UPDATE", (report_id,))
+            report = cur.fetchone()
+
+            if not report:
+                return jsonify({"error": "Report not found."}), 404
+
+            if report.get("status") != "pending":
+                return jsonify({"error": "Only pending reports can be rejected."}), 400
+
+            cur.execute(
+                """
+                UPDATE scam_reports
+                SET status = 'rejected', reviewed_at = NOW(), reviewed_by = %s, review_notes = %s
+                WHERE id = %s
+                """,
+                (admin_user["id"], notes, report_id)
+            )
+
+    return jsonify({"ok": True, "message": "Report rejected. It was not added to scam_urls."})
 
 
 @app.route("/admin/database-stats")
