@@ -817,9 +817,17 @@ def ensure_db():
             cur.execute("ALTER TABLE scam_reports ADD COLUMN IF NOT EXISTS triage_score INT DEFAULT 0")
             cur.execute("ALTER TABLE scam_reports ADD COLUMN IF NOT EXISTS triage_status TEXT DEFAULT 'watchlist'")
             cur.execute("ALTER TABLE scam_reports ADD COLUMN IF NOT EXISTS triage_reasons TEXT")
+            cur.execute("ALTER TABLE intelligence_events ADD COLUMN IF NOT EXISTS entity_key TEXT")
+            cur.execute("ALTER TABLE intelligence_events ADD COLUMN IF NOT EXISTS duplicate_count INT DEFAULT 1")
+            cur.execute("ALTER TABLE intelligence_events ADD COLUMN IF NOT EXISTS signal_source_count INT DEFAULT 1")
+            cur.execute("ALTER TABLE intelligence_events ADD COLUMN IF NOT EXISTS resolution TEXT")
+            cur.execute("ALTER TABLE intelligence_events ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP DEFAULT NOW()")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_intelligence_events_status ON intelligence_events(status)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_intelligence_events_normalized_url ON intelligence_events(normalized_url)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_intelligence_events_domain ON intelligence_events(domain)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_intelligence_events_entity_key ON intelligence_events(entity_key)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_scam_reports_triage_status ON scam_reports(triage_status)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_scam_reports_normalized_url ON scam_reports(normalized_url)")
 
     _db_ready = True
 
@@ -887,11 +895,8 @@ def is_ip_address(host):
     return bool(re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", host or ""))
 
 
-def triage_report_signal(raw_url="", message=""):
-    """
-    LidaShield Intelligence Engine v1.
-    Scores evidence and routes reports without blindly marking URLs dangerous.
-    """
+def triage_report_signal(raw_url="", message="", user_id=None):
+    """LidaShield Intelligence Engine v2: score, dedupe, and auto-sort reports."""
 
     raw_url = (raw_url or "").strip()
     message = (message or "").strip()
@@ -899,45 +904,65 @@ def triage_report_signal(raw_url="", message=""):
     reasons = []
     normalized_url = None
     domain = ""
+    duplicate_count = 0
+    distinct_reporters = 0
+    existing_intel_events = 0
+    resolution = "needs_more_evidence"
 
     if raw_url:
         try:
             normalized_url = normalize_url(raw_url)
             domain = extract_domain(normalized_url)
         except ValueError:
-            reasons.append("Invalid URL format")
-            return {
-                "score": 5,
-                "status": "auto_rejected",
-                "reasons": reasons,
-                "normalized_url": None,
-                "domain": ""
-            }
+            return {"score": 5, "status": "auto_rejected", "reasons": ["Invalid URL format"], "normalized_url": None, "domain": "", "duplicate_count": 1, "distinct_reporters": 0, "resolution": "invalid_url"}
+
+    if domain:
+        reserved_domains = (".example", ".test", ".invalid", ".localhost")
+        if domain.endswith(reserved_domains) or domain in ("example.com", "example.org", "example.net"):
+            return {"score": 0, "status": "auto_rejected", "reasons": ["Reserved/test domain detected; not treated as real threat intelligence"], "normalized_url": normalized_url, "domain": domain, "duplicate_count": 1, "distinct_reporters": 0, "resolution": "test_or_reserved_domain"}
 
     if normalized_url and DATABASE_URL:
         try:
             with get_db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT verdict, source FROM scam_urls WHERE normalized_url = %s LIMIT 1",
-                        (normalized_url,)
-                    )
+                    cur.execute("SELECT verdict, source FROM scam_urls WHERE normalized_url = %s LIMIT 1", (normalized_url,))
                     existing = cur.fetchone()
                     if existing and existing.get("verdict") == "dangerous":
                         score += 90
+                        resolution = "verified_database_match"
                         reasons.append(f"Already verified as dangerous in LidaShield database via {existing.get('source') or 'database'}")
+
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) AS total_reports,
+                               COUNT(DISTINCT COALESCE(user_id, -id)) AS distinct_reporters
+                        FROM scam_reports
+                        WHERE normalized_url = %s
+                        """,
+                        (normalized_url,)
+                    )
+                    rep = cur.fetchone() or {}
+                    duplicate_count = int(rep.get("total_reports") or 0)
+                    distinct_reporters = int(rep.get("distinct_reporters") or 0)
+
+                    cur.execute("SELECT COUNT(*) AS total_events FROM intelligence_events WHERE normalized_url = %s", (normalized_url,))
+                    ev = cur.fetchone() or {}
+                    existing_intel_events = int(ev.get("total_events") or 0)
+
+                    if duplicate_count >= 1:
+                        score += min(18, duplicate_count * 4)
+                        reasons.append(f"Duplicate report history: {duplicate_count} previous report(s) for this URL")
+                    if distinct_reporters >= 2:
+                        score += min(24, distinct_reporters * 8)
+                        reasons.append(f"Multiple independent reporters: {distinct_reporters}")
+                    if existing_intel_events >= 1:
+                        score += min(10, existing_intel_events * 3)
+                        reasons.append(f"Existing intelligence events for this URL: {existing_intel_events}")
         except Exception:
             reasons.append("Database evidence lookup unavailable during triage")
 
     combined = f"{raw_url} {message}".lower()
-
-    high_risk_terms = [
-        "otp", "password", "login", "verify", "verification", "account suspended",
-        "suspended", "bank", "wallet", "paypal", "paynow", "singpass", "dbs",
-        "ocbc", "uob", "refund", "prize", "claim", "parcel", "delivery",
-        "urgent", "within 24", "click", "security alert", "confirm your account"
-    ]
-
+    high_risk_terms = ["otp", "password", "login", "verify", "verification", "account suspended", "suspended", "bank", "wallet", "paypal", "paynow", "singpass", "dbs", "ocbc", "uob", "refund", "prize", "claim", "parcel", "delivery", "urgent", "within 24", "click", "security alert", "confirm your account"]
     hits = [term for term in high_risk_terms if term in combined]
     if hits:
         score += min(35, 8 * len(hits))
@@ -947,20 +972,16 @@ def triage_report_signal(raw_url="", message=""):
         if is_ip_address(domain):
             score += 20
             reasons.append("URL uses raw IP address instead of normal domain")
-
         if domain.startswith("xn--"):
             score += 25
             reasons.append("Domain uses punycode, which can be used for impersonation")
-
         if domain.count("-") >= 3:
             score += 12
             reasons.append("Domain contains many hyphens")
-
         suspicious_tlds = (".xyz", ".top", ".click", ".cyou", ".quest", ".mom", ".rest", ".sbs")
         if domain.endswith(suspicious_tlds):
             score += 12
             reasons.append("Domain uses a high-risk low-trust TLD pattern")
-
         brand_terms = ["dbs", "ocbc", "uob", "singpass", "paypal", "google", "microsoft", "apple"]
         official_domains = ["dbs.com", "ocbc.com", "uob.com.sg", "paypal.com", "google.com", "microsoft.com", "apple.com"]
         if any(b in domain for b in brand_terms) and not any(domain.endswith(good) for good in official_domains):
@@ -974,7 +995,7 @@ def triage_report_signal(raw_url="", message=""):
     score = max(0, min(100, score))
 
     if score >= 90:
-        status = "verified"
+        status = "verified" if resolution == "verified_database_match" else "high_risk"
     elif score >= 65:
         status = "high_risk"
     elif score >= 25:
@@ -982,45 +1003,39 @@ def triage_report_signal(raw_url="", message=""):
     else:
         status = "low_signal"
 
+    if status == "high_risk" and resolution == "needs_more_evidence":
+        resolution = "auto_triaged_high_risk"
+    elif status == "watchlist" and resolution == "needs_more_evidence":
+        resolution = "watchlist"
+    elif status == "low_signal" and resolution == "needs_more_evidence":
+        resolution = "low_signal"
+
     if not reasons:
         reasons.append("No strong automated evidence found yet")
 
-    return {
-        "score": score,
-        "status": status,
-        "reasons": reasons,
-        "normalized_url": normalized_url,
-        "domain": domain
-    }
+    return {"score": score, "status": status, "reasons": reasons, "normalized_url": normalized_url, "domain": domain, "duplicate_count": duplicate_count + 1 if normalized_url else 1, "distinct_reporters": distinct_reporters, "existing_intel_events": existing_intel_events, "resolution": resolution}
 
 
 def insert_intelligence_event(cur, user_id=None, report_id=None, raw_url=None, message=None, triage=None, source="community_report", evidence_type="community_report"):
-    triage = triage or triage_report_signal(raw_url, message)
+    triage = triage or triage_report_signal(raw_url, message, user_id=user_id)
     normalized_url = triage.get("normalized_url")
     domain = triage.get("domain") or (extract_domain(normalized_url) if normalized_url else "")
     message_hash = hashlib.sha256((message or "").encode("utf-8")).hexdigest() if message else None
     reason = "; ".join(triage.get("reasons") or [])
+    entity_key = normalized_url or (f"message:{message_hash}" if message_hash else None)
 
     cur.execute(
         """
         INSERT INTO intelligence_events
-        (user_id, report_id, url, normalized_url, domain, message_hash, source, evidence_type, confidence_score, reason, status)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (user_id, report_id, url, normalized_url, domain, message_hash, source, evidence_type,
+         confidence_score, reason, status, entity_key, duplicate_count, signal_source_count, resolution, last_seen)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
         RETURNING id
         """,
-        (
-            user_id,
-            report_id,
-            raw_url,
-            normalized_url,
-            domain,
-            message_hash,
-            source,
-            evidence_type,
-            triage.get("score", 0),
-            reason,
-            triage.get("status", "watchlist")
-        )
+        (user_id, report_id, raw_url, normalized_url, domain, message_hash, source, evidence_type,
+         triage.get("score", 0), reason, triage.get("status", "watchlist"), entity_key,
+         triage.get("duplicate_count", 1), max(1, triage.get("distinct_reporters", 0) or 1),
+         triage.get("resolution", "needs_more_evidence"))
     )
     return cur.fetchone()
 
@@ -2179,6 +2194,8 @@ def admin_reports_page():
     event_counts = []
     reports = []
     events = []
+    risky_domains = []
+    duplicate_urls = []
     db_error = None
 
     try:
@@ -2203,13 +2220,38 @@ def admin_reports_page():
                 event_counts = cur.fetchall()
 
                 cur.execute('''
+                    SELECT domain, COUNT(*) AS event_count,
+                           MAX(COALESCE(confidence_score, 0)) AS max_score,
+                           ROUND(AVG(COALESCE(confidence_score, 0))::numeric, 1) AS avg_score
+                    FROM intelligence_events
+                    WHERE domain IS NOT NULL AND domain <> ''
+                    GROUP BY domain
+                    ORDER BY max_score DESC, event_count DESC
+                    LIMIT 12
+                ''')
+                risky_domains = cur.fetchall()
+
+                cur.execute('''
+                    SELECT normalized_url, COUNT(*) AS report_count,
+                           MAX(COALESCE(triage_score, 0)) AS max_score
+                    FROM scam_reports
+                    WHERE normalized_url IS NOT NULL
+                    GROUP BY normalized_url
+                    HAVING COUNT(*) > 1
+                    ORDER BY report_count DESC, max_score DESC
+                    LIMIT 12
+                ''')
+                duplicate_urls = cur.fetchall()
+
+                cur.execute('''
                     SELECT r.id, r.url, r.normalized_url, r.message, r.category,
                            COALESCE(r.status, 'pending') AS status,
                            COALESCE(r.triage_score, 0) AS triage_score,
                            COALESCE(r.triage_status, 'watchlist') AS triage_status,
                            r.triage_reasons,
                            r.created_at::text AS created_at,
-                           u.email AS reporter_email
+                           u.email AS reporter_email,
+                           COUNT(*) OVER (PARTITION BY r.normalized_url) AS duplicate_reports
                     FROM scam_reports r
                     LEFT JOIN users u ON u.id = r.user_id
                     ORDER BY r.created_at DESC
@@ -2221,6 +2263,8 @@ def admin_reports_page():
                     SELECT id, url, domain, evidence_type,
                            COALESCE(confidence_score, 0) AS confidence_score,
                            COALESCE(status, 'watchlist') AS status,
+                           COALESCE(duplicate_count, 1) AS duplicate_count,
+                           COALESCE(resolution, 'needs_more_evidence') AS resolution,
                            reason,
                            created_at::text AS created_at
                     FROM intelligence_events
@@ -2246,16 +2290,17 @@ def admin_reports_page():
     def count_cards(rows):
         if not rows:
             return '<div class="empty-mini">No data yet.</div>'
-        cards = []
-        for row in rows:
-            status = row.get('status') or 'unknown'
-            cards.append(f'''
-              <div class="stat-card">
-                <div class="stat-number">{e(row.get('count', 0))}</div>
-                <div class="stat-label">{e(status.replace('_', ' '))}</div>
-              </div>
-            ''')
-        return ''.join(cards)
+        return ''.join(f'''<div class="stat-card"><div class="stat-number">{e(row.get('count', 0))}</div><div class="stat-label">{e((row.get('status') or 'unknown').replace('_', ' '))}</div></div>''' for row in rows)
+
+    def domain_rows(rows):
+        if not rows:
+            return '<div class="empty">No domain intelligence yet.</div>'
+        return ''.join(f'''<div class="mini-row"><span>{e(row.get('domain'))}</span><b>{e(row.get('max_score'))}/100</b><small>{e(row.get('event_count'))} event(s)</small></div>''' for row in rows)
+
+    def duplicate_rows(rows):
+        if not rows:
+            return '<div class="empty">No duplicate URL clusters yet.</div>'
+        return ''.join(f'''<div class="mini-row"><span>{e(row.get('normalized_url'))}</span><b>{e(row.get('report_count'))} reports</b><small>max {e(row.get('max_score'))}/100</small></div>''' for row in rows)
 
     def report_rows(rows):
         if not rows:
@@ -2268,13 +2313,11 @@ def admin_reports_page():
             cls = status_class(triage_status)
             reasons = r.get('triage_reasons') or 'No triage signals saved.'
             reporter = r.get('reporter_email') or 'unknown user'
+            dup = int(r.get('duplicate_reports') or 1)
             out.append(f'''
               <div class="item">
-                <div class="item-top">
-                  <div class="url">{e(url)}</div>
-                  <span class="badge {cls}">{e(triage_status.replace('_', ' '))} · {score}/100</span>
-                </div>
-                <div class="meta">Report #{e(r.get('id'))} · Status: {e(r.get('status'))} · Category: {e(r.get('category') or 'url')} · {e(r.get('created_at') or '')}</div>
+                <div class="item-top"><div class="url">{e(url)}</div><span class="badge {cls}">{e(triage_status.replace('_', ' '))} · {score}/100</span></div>
+                <div class="meta">Report #{e(r.get('id'))} · Status: {e(r.get('status'))} · Duplicates: {dup} · Category: {e(r.get('category') or 'url')} · {e(r.get('created_at') or '')}</div>
                 <div class="meta">Reporter: {e(reporter)}</div>
                 <div class="message">{e(r.get('message') or 'No message provided.')}</div>
                 <div class="signals"><b>Signals:</b> {e(reasons)}</div>
@@ -2291,13 +2334,11 @@ def admin_reports_page():
             score = int(ev.get('confidence_score') or 0)
             status = ev.get('status') or 'watchlist'
             cls = status_class(status)
+            dup = int(ev.get('duplicate_count') or 1)
             out.append(f'''
               <div class="item compact">
-                <div class="item-top">
-                  <div class="url">{e(url)}</div>
-                  <span class="badge {cls}">{e(status.replace('_', ' '))} · {score}/100</span>
-                </div>
-                <div class="meta">Domain: {e(ev.get('domain') or 'unknown')} · Type: {e(ev.get('evidence_type') or 'event')} · {e(ev.get('created_at') or '')}</div>
+                <div class="item-top"><div class="url">{e(url)}</div><span class="badge {cls}">{e(status.replace('_', ' '))} · {score}/100</span></div>
+                <div class="meta">Domain: {e(ev.get('domain') or 'unknown')} · Type: {e(ev.get('evidence_type') or 'event')} · Duplicates: {dup} · Resolution: {e(ev.get('resolution') or 'needs_more_evidence')} · {e(ev.get('created_at') or '')}</div>
                 <div class="signals">{e(ev.get('reason') or 'No reason saved.')}</div>
               </div>
             ''')
@@ -2305,82 +2346,13 @@ def admin_reports_page():
 
     db_error_html = ''
     if db_error:
-        db_error_html = f'''
-          <div class="error-box">
-            <b>Admin database query failed.</b><br>
-            {e(db_error)}<br><br>
-            This page is now server-rendered, so it should show the real problem instead of loading forever.
-          </div>
-        '''
+        db_error_html = f'''<div class="error-box"><b>Admin database query failed.</b><br>{e(db_error)}<br><br>This page is server-rendered, so it shows the real problem instead of loading forever.</div>'''
 
     return f'''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LidaShield Intelligence Admin</title>
-  <style>
-    :root {{ --bg:#050816;--panel:#0b1024;--text:#f8fafc;--muted:#9fb0ca;--gold:#facc15;--line:rgba(255,255,255,.11);--red:#fb7185;--green:#86efac; }}
-    *{{box-sizing:border-box}}
-    body{{margin:0;background:radial-gradient(circle at top,#111827 0,#050816 48%,#020617 100%);color:var(--text);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh;padding:28px;}}
-    .wrap{{max-width:1180px;margin:0 auto}}
-    .top{{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:22px;flex-wrap:wrap}}
-    .brand{{font-weight:950;font-size:28px;letter-spacing:-.03em}} .brand span{{color:var(--gold)}}
-    .subtitle{{color:#bad3f5;line-height:1.55;font-size:15px;margin-top:6px;max-width:680px}}
-    .nav{{display:flex;gap:10px;flex-wrap:wrap}}
-    a,.btn{{color:inherit}}
-    .btn{{border:1px solid var(--line);background:rgba(255,255,255,.06);padding:11px 15px;border-radius:14px;text-decoration:none;font-weight:900;display:inline-flex;align-items:center;justify-content:center}}
-    .btn.gold{{background:linear-gradient(135deg,#fde047,#f59e0b);color:#111827;border:0}}
-    .card{{background:linear-gradient(180deg,rgba(17,24,39,.9),rgba(15,23,42,.82));border:1px solid var(--line);border-radius:24px;padding:22px;box-shadow:0 20px 70px rgba(0,0,0,.35);margin-bottom:18px}}
-    h2{{margin:0 0 12px;font-size:22px}}
-    .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:14px}}
-    .stat-card{{background:rgba(255,255,255,.045);border:1px solid var(--line);border-radius:18px;padding:16px}}
-    .stat-number{{font-size:32px;font-weight:950;font-family:Georgia,serif}}
-    .stat-label{{color:var(--muted);text-transform:uppercase;letter-spacing:.12em;font-size:12px;margin-top:5px}}
-    .item{{border:1px solid var(--line);background:rgba(255,255,255,.04);border-radius:18px;padding:16px;margin:12px 0}}
-    .item.compact{{padding:14px}}
-    .item-top{{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}}
-    .url{{font-weight:950;word-break:break-all;line-height:1.35}}
-    .meta{{color:var(--muted);font-size:13px;line-height:1.6;margin-top:6px}}
-    .message{{color:#dbeafe;background:rgba(255,255,255,.035);border:1px solid var(--line);border-radius:14px;padding:10px;margin-top:10px;line-height:1.6}}
-    .signals{{color:#cbd5e1;font-size:14px;line-height:1.6;margin-top:10px}}
-    .badge{{display:inline-flex;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:950;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}}
-    .badge.good{{background:rgba(34,197,94,.13);color:var(--green);border:1px solid rgba(34,197,94,.3)}}
-    .badge.warn{{background:rgba(250,204,21,.13);color:#fde047;border:1px solid rgba(250,204,21,.3)}}
-    .badge.bad{{background:rgba(244,63,94,.13);color:var(--red);border:1px solid rgba(244,63,94,.3)}}
-    .badge.neutral{{background:rgba(148,163,184,.13);color:#cbd5e1;border:1px solid rgba(148,163,184,.25)}}
-    .empty,.empty-mini{{color:var(--muted);text-align:center;padding:20px}}
-    .error-box{{border:1px solid rgba(251,113,133,.35);background:rgba(251,113,133,.1);color:#fecdd3;border-radius:18px;padding:16px;margin-bottom:18px;line-height:1.6}}
-    .note{{border:1px solid rgba(250,204,21,.25);background:rgba(250,204,21,.08);color:#fde68a;border-radius:18px;padding:14px;line-height:1.6;margin-bottom:18px}}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="top">
-      <div>
-        <div class="brand">Lida<span>Shield</span> Intelligence</div>
-        <div class="subtitle">Server-rendered admin intelligence view. No endless loading spinner. Auto-triage sorts reports by evidence strength before anything enters the verified scam database.</div>
-      </div>
-      <div class="nav">
-        <a class="btn" href="/dashboard">Dashboard</a>
-        <a class="btn" href="/admin/database-stats">Database stats</a>
-        <a class="btn gold" href="/admin/reports">Refresh</a>
-      </div>
-    </div>
-
-    {db_error_html}
-
-    <div class="note"><b>Direction changed:</b> this page is now an intelligence console, not a slow manual approval queue. AI-style triage helps rank reports, but verified evidence still decides what becomes part of LidaShield's public scam database.</div>
-
-    <div class="card"><h2>Report status</h2><div class="subtitle">Latest user-submitted reports by review status.</div><div class="grid">{count_cards(report_counts)}</div></div>
-    <div class="card"><h2>Intelligence event status</h2><div class="subtitle">Evidence events generated from reports, scans, and threat intelligence.</div><div class="grid">{count_cards(event_counts)}</div></div>
-    <div class="card"><h2>Latest triaged reports</h2><div class="subtitle">These reports are auto-scored. High scores are important signals, not automatic truth.</div>{report_rows(reports)}</div>
-    <div class="card"><h2>Latest intelligence events</h2><div class="subtitle">This is the real LidaShield data engine layer.</div>{event_rows(events)}</div>
-  </div>
-</body>
-</html>
-    '''
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LidaShield Intelligence Admin</title>
+<style>
+:root{{--bg:#050816;--panel:#0b1024;--text:#f8fafc;--muted:#9fb0ca;--gold:#facc15;--line:rgba(255,255,255,.11);--red:#fb7185;--green:#86efac}}*{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(circle at top,#111827 0,#050816 48%,#020617 100%);color:var(--text);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh;padding:28px}}.wrap{{max-width:1180px;margin:0 auto}}.top{{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:22px;flex-wrap:wrap}}.brand{{font-weight:950;font-size:28px;letter-spacing:-.03em}}.brand span{{color:var(--gold)}}.subtitle{{color:#bad3f5;line-height:1.55;font-size:15px;margin-top:6px;max-width:720px}}.nav{{display:flex;gap:10px;flex-wrap:wrap}}a,.btn{{color:inherit}}.btn{{border:1px solid var(--line);background:rgba(255,255,255,.06);padding:11px 15px;border-radius:14px;text-decoration:none;font-weight:900;display:inline-flex;align-items:center;justify-content:center}}.btn.gold{{background:linear-gradient(135deg,#fde047,#f59e0b);color:#111827;border:0}}.card{{background:linear-gradient(180deg,rgba(17,24,39,.9),rgba(15,23,42,.82));border:1px solid var(--line);border-radius:24px;padding:22px;box-shadow:0 20px 70px rgba(0,0,0,.35);margin-bottom:18px}}h2{{margin:0 0 12px;font-size:22px}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:14px}}.two{{display:grid;grid-template-columns:1fr 1fr;gap:18px}}@media(max-width:800px){{.two{{grid-template-columns:1fr}}}}.stat-card{{background:rgba(255,255,255,.045);border:1px solid var(--line);border-radius:18px;padding:16px}}.stat-number{{font-size:32px;font-weight:950;font-family:Georgia,serif}}.stat-label{{color:var(--muted);text-transform:uppercase;letter-spacing:.12em;font-size:12px;margin-top:5px}}.item{{border:1px solid var(--line);background:rgba(255,255,255,.04);border-radius:18px;padding:16px;margin:12px 0}}.item.compact{{padding:14px}}.item-top{{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}}.url{{font-weight:950;word-break:break-all;line-height:1.35}}.meta{{color:var(--muted);font-size:13px;line-height:1.6;margin-top:6px}}.message{{color:#dbeafe;background:rgba(255,255,255,.035);border:1px solid var(--line);border-radius:14px;padding:10px;margin-top:10px;line-height:1.6}}.signals{{color:#cbd5e1;font-size:14px;line-height:1.6;margin-top:10px}}.badge{{display:inline-flex;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:950;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}}.badge.good{{background:rgba(34,197,94,.13);color:var(--green);border:1px solid rgba(34,197,94,.3)}}.badge.warn{{background:rgba(250,204,21,.13);color:#fde047;border:1px solid rgba(250,204,21,.3)}}.badge.bad{{background:rgba(244,63,94,.13);color:var(--red);border:1px solid rgba(244,63,94,.3)}}.badge.neutral{{background:rgba(148,163,184,.13);color:#cbd5e1;border:1px solid rgba(148,163,184,.25)}}.empty,.empty-mini{{color:var(--muted);text-align:center;padding:20px}}.error-box{{border:1px solid rgba(251,113,133,.35);background:rgba(251,113,133,.1);color:#fecdd3;border-radius:18px;padding:16px;margin-bottom:18px;line-height:1.6}}.note{{border:1px solid rgba(250,204,21,.25);background:rgba(250,204,21,.08);color:#fde68a;border-radius:18px;padding:14px;line-height:1.6;margin-bottom:18px}}.mini-row{{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;border-bottom:1px solid var(--line);padding:12px 0;color:#dbeafe}}.mini-row:last-child{{border-bottom:0}}.mini-row span{{word-break:break-all}}.mini-row small{{color:var(--muted)}}
+</style></head><body><div class="wrap"><div class="top"><div><div class="brand">Lida<span>Shield</span> Intelligence</div><div class="subtitle">Server-rendered intelligence console. Auto-triage now detects duplicate reports, clusters risky domains, and filters obvious junk before anything enters the verified scam database.</div></div><div class="nav"><a class="btn" href="/dashboard">Dashboard</a><a class="btn" href="/admin/database-stats">Database stats</a><a class="btn gold" href="/admin/reports">Refresh</a></div></div>{db_error_html}<div class="note"><b>Batch 24 active:</b> duplicate reports now become a signal, not a manual headache. High-risk reports are intelligence leads; only verified evidence should affect public verdicts.</div><div class="card"><h2>Report status</h2><div class="subtitle">Latest user-submitted reports by review status.</div><div class="grid">{count_cards(report_counts)}</div></div><div class="card"><h2>Intelligence event status</h2><div class="subtitle">Evidence events generated from reports, scans, and threat intelligence.</div><div class="grid">{count_cards(event_counts)}</div></div><div class="two"><div class="card"><h2>Top risky domains</h2><div class="subtitle">Domains ranked by current intelligence confidence.</div>{domain_rows(risky_domains)}</div><div class="card"><h2>Duplicate URL clusters</h2><div class="subtitle">Repeated reports are grouped here instead of becoming endless manual work.</div>{duplicate_rows(duplicate_urls)}</div></div><div class="card"><h2>Latest triaged reports</h2><div class="subtitle">These reports are auto-scored. High scores are important signals, not automatic truth.</div>{report_rows(reports)}</div><div class="card"><h2>Latest intelligence events</h2><div class="subtitle">This is the real LidaShield data engine layer.</div>{event_rows(events)}</div></div></body></html>'''
 
 
 @app.route("/admin/api/reports-count")
@@ -2643,7 +2615,7 @@ def report_scam():
 
     user = get_current_user()
 
-    triage = triage_report_signal(raw_url, message)
+    triage = triage_report_signal(raw_url, message, user_id=user["id"] if user else None)
     normalized_url = triage.get("normalized_url")
 
     if not raw_url and not message:
@@ -2694,7 +2666,9 @@ def report_scam():
         "triage": {
             "score": triage.get("score", 0),
             "status": triage.get("status", "watchlist"),
-            "reasons": triage.get("reasons", [])[:5]
+            "reasons": triage.get("reasons", [])[:5],
+            "duplicate_count": triage.get("duplicate_count", 1),
+            "resolution": triage.get("resolution", "needs_more_evidence")
         }
     })
 
