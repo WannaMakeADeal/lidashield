@@ -1823,6 +1823,14 @@ function displayVerdict(verdict){
     return "Low risk";
   }
 
+  if(verdict === "dangerous"){
+    return "Dangerous";
+  }
+
+  if(verdict === "suspicious"){
+    return "Suspicious";
+  }
+
   if(verdict === "unknown"){
     return "Unknown";
   }
@@ -1833,6 +1841,14 @@ function displayVerdict(verdict){
 function formatSourceLabel(data){
   if(data.known_by_lidashield){
     return "LidaShield database";
+  }
+
+  if(data.source === "lidashield_intelligence"){
+    return "Unverified intelligence";
+  }
+
+  if(data.source === "lidashield_watchlist"){
+    return "Watchlist intelligence";
   }
 
   if(data.source === "external_intelligence" || data.source === "virustotal"){
