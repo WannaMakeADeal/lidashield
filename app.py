@@ -2007,7 +2007,7 @@ def admin_reports_page():
         <button class="pill" data-status="rejected">Rejected</button>
       </div>
       <div id="loader" class="loader">Loading reports...</div>
-      <div id="reports"></div>
+      <div id="reports"><div class="empty">Loading pending reports...</div></div>
     </div>
   </div>
 
@@ -2026,11 +2026,22 @@ function badge(status){
 
 async function loadReports(){
   $("loader").classList.add("show");
-  $("reports").innerHTML = "";
+  $("reports").innerHTML = `<div class="empty">Loading ${escapeHtml(currentStatus)} reports...</div>`;
+
   try{
     const res = await fetch(`/admin/api/reports?status=${encodeURIComponent(currentStatus)}`);
-    const data = await res.json();
-    if(!res.ok){ throw new Error(data.error || "Could not load reports."); }
+    const raw = await res.text();
+    let data;
+
+    try{
+      data = JSON.parse(raw);
+    }catch(parseError){
+      throw new Error(`Admin reports API did not return JSON. Status: ${res.status}. Response: ${raw.slice(0, 180)}`);
+    }
+
+    if(!res.ok){
+      throw new Error(data.error || data.details || "Could not load reports.");
+    }
 
     if(!data.reports || data.reports.length === 0){
       $("reports").innerHTML = `<div class="empty">No ${escapeHtml(currentStatus)} reports.</div>`;
@@ -2040,13 +2051,15 @@ async function loadReports(){
     $("reports").innerHTML = data.reports.map(r => {
       const canAct = r.status === "pending";
       const url = r.url || r.normalized_url || "Message-only report";
+      const reporter = r.reporter_email ? ` · Reporter: ${escapeHtml(r.reporter_email)}` : "";
+
       return `
         <div class="report" id="report-${r.id}">
           <div class="report-head">
             <div class="url">${escapeHtml(url)}</div>
             <div>${badge(r.status)}</div>
           </div>
-          <div class="meta">Category: ${escapeHtml(r.category || "url")} · Submitted: ${escapeHtml(r.created_at || "")}</div>
+          <div class="meta">Report #${escapeHtml(r.id)} · Category: ${escapeHtml(r.category || "url")} · Submitted: ${escapeHtml(r.created_at || "")}${reporter}</div>
           <div class="msg">${escapeHtml(r.message || "No message provided.")}</div>
           ${r.review_notes ? `<div class="msg"><b>Review notes:</b> ${escapeHtml(r.review_notes)}</div>` : ""}
           ${canAct ? `
@@ -2058,7 +2071,7 @@ async function loadReports(){
         </div>`;
     }).join("");
   }catch(e){
-    $("reports").innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`;
+    $("reports").innerHTML = `<div class="empty">${escapeHtml(e.message || "Could not load reports.")}</div>`;
   }finally{
     $("loader").classList.remove("show");
   }
@@ -2110,6 +2123,28 @@ loadReports();
     """
 
 
+
+@app.route("/admin/api/reports-count")
+def admin_api_reports_count():
+    admin_user, admin_error = require_admin()
+    if admin_error:
+        return admin_error
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT status, COUNT(*) AS count
+                FROM scam_reports
+                GROUP BY status
+                ORDER BY status
+                """
+            )
+            rows = cur.fetchall()
+
+    return jsonify({"ok": True, "counts": rows})
+
+
 @app.route("/admin/api/reports")
 def admin_api_reports():
     admin_user, admin_error = require_admin()
@@ -2125,7 +2160,7 @@ def admin_api_reports():
             cur.execute(
                 """
                 SELECT r.id, r.url, r.normalized_url, r.message, r.category, r.status,
-                       r.created_at, r.reviewed_at, r.review_notes,
+                       r.created_at::text AS created_at, r.reviewed_at::text AS reviewed_at, r.review_notes,
                        u.email AS reporter_email
                 FROM scam_reports r
                 LEFT JOIN users u ON u.id = r.user_id
