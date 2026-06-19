@@ -16,6 +16,7 @@ import io
 import re
 import json
 import hashlib
+import html
 
 # ============================================================
 # LidaShield v1
@@ -2163,182 +2164,223 @@ def admin_api_intelligence_summary():
         return jsonify({"ok": False, "error": "Intelligence summary failed", "details": str(e), "type": type(e).__name__}), 500
 
 
-@app.route("/admin/reports")
+@app.route('/admin/reports')
 def admin_reports_page():
-    """Admin UI for reviewing user-submitted scam reports."""
+    '''Server-rendered admin intelligence page. No fetch spinner for main data.'''
 
     admin_user, admin_error = require_admin()
     if admin_error:
         return admin_error
 
-    return """
+    def e(value):
+        return html.escape(str(value if value is not None else ''))
+
+    report_counts = []
+    event_counts = []
+    reports = []
+    events = []
+    db_error = None
+
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '5000ms'")
+
+                cur.execute('''
+                    SELECT COALESCE(status, 'pending') AS status, COUNT(*) AS count
+                    FROM scam_reports
+                    GROUP BY COALESCE(status, 'pending')
+                    ORDER BY count DESC, status ASC
+                ''')
+                report_counts = cur.fetchall()
+
+                cur.execute('''
+                    SELECT COALESCE(status, 'watchlist') AS status, COUNT(*) AS count
+                    FROM intelligence_events
+                    GROUP BY COALESCE(status, 'watchlist')
+                    ORDER BY count DESC, status ASC
+                ''')
+                event_counts = cur.fetchall()
+
+                cur.execute('''
+                    SELECT r.id, r.url, r.normalized_url, r.message, r.category,
+                           COALESCE(r.status, 'pending') AS status,
+                           COALESCE(r.triage_score, 0) AS triage_score,
+                           COALESCE(r.triage_status, 'watchlist') AS triage_status,
+                           r.triage_reasons,
+                           r.created_at::text AS created_at,
+                           u.email AS reporter_email
+                    FROM scam_reports r
+                    LEFT JOIN users u ON u.id = r.user_id
+                    ORDER BY r.created_at DESC
+                    LIMIT 30
+                ''')
+                reports = cur.fetchall()
+
+                cur.execute('''
+                    SELECT id, url, domain, evidence_type,
+                           COALESCE(confidence_score, 0) AS confidence_score,
+                           COALESCE(status, 'watchlist') AS status,
+                           reason,
+                           created_at::text AS created_at
+                    FROM intelligence_events
+                    ORDER BY created_at DESC
+                    LIMIT 30
+                ''')
+                events = cur.fetchall()
+
+    except Exception as ex:
+        app.logger.exception('Server-rendered admin reports page failed')
+        db_error = f'{type(ex).__name__}: {ex}'
+
+    def status_class(status):
+        s = (status or '').lower()
+        if s in ('verified', 'approved'):
+            return 'good'
+        if s in ('high_risk', 'pending', 'watchlist'):
+            return 'warn'
+        if s in ('rejected', 'auto_rejected', 'low_signal'):
+            return 'bad'
+        return 'neutral'
+
+    def count_cards(rows):
+        if not rows:
+            return '<div class="empty-mini">No data yet.</div>'
+        cards = []
+        for row in rows:
+            status = row.get('status') or 'unknown'
+            cards.append(f'''
+              <div class="stat-card">
+                <div class="stat-number">{e(row.get('count', 0))}</div>
+                <div class="stat-label">{e(status.replace('_', ' '))}</div>
+              </div>
+            ''')
+        return ''.join(cards)
+
+    def report_rows(rows):
+        if not rows:
+            return '<div class="empty">No reports yet. When users report links, they will appear here automatically.</div>'
+        out = []
+        for r in rows:
+            url = r.get('url') or r.get('normalized_url') or 'Message-only report'
+            score = int(r.get('triage_score') or 0)
+            triage_status = r.get('triage_status') or 'watchlist'
+            cls = status_class(triage_status)
+            reasons = r.get('triage_reasons') or 'No triage signals saved.'
+            reporter = r.get('reporter_email') or 'unknown user'
+            out.append(f'''
+              <div class="item">
+                <div class="item-top">
+                  <div class="url">{e(url)}</div>
+                  <span class="badge {cls}">{e(triage_status.replace('_', ' '))} · {score}/100</span>
+                </div>
+                <div class="meta">Report #{e(r.get('id'))} · Status: {e(r.get('status'))} · Category: {e(r.get('category') or 'url')} · {e(r.get('created_at') or '')}</div>
+                <div class="meta">Reporter: {e(reporter)}</div>
+                <div class="message">{e(r.get('message') or 'No message provided.')}</div>
+                <div class="signals"><b>Signals:</b> {e(reasons)}</div>
+              </div>
+            ''')
+        return ''.join(out)
+
+    def event_rows(rows):
+        if not rows:
+            return '<div class="empty">No intelligence events yet.</div>'
+        out = []
+        for ev in rows:
+            url = ev.get('url') or 'No URL'
+            score = int(ev.get('confidence_score') or 0)
+            status = ev.get('status') or 'watchlist'
+            cls = status_class(status)
+            out.append(f'''
+              <div class="item compact">
+                <div class="item-top">
+                  <div class="url">{e(url)}</div>
+                  <span class="badge {cls}">{e(status.replace('_', ' '))} · {score}/100</span>
+                </div>
+                <div class="meta">Domain: {e(ev.get('domain') or 'unknown')} · Type: {e(ev.get('evidence_type') or 'event')} · {e(ev.get('created_at') or '')}</div>
+                <div class="signals">{e(ev.get('reason') or 'No reason saved.')}</div>
+              </div>
+            ''')
+        return ''.join(out)
+
+    db_error_html = ''
+    if db_error:
+        db_error_html = f'''
+          <div class="error-box">
+            <b>Admin database query failed.</b><br>
+            {e(db_error)}<br><br>
+            This page is now server-rendered, so it should show the real problem instead of loading forever.
+          </div>
+        '''
+
+    return f'''
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LidaShield Admin Reports</title>
+  <title>LidaShield Intelligence Admin</title>
   <style>
-    :root{--bg:#050816;--panel:#0b1024;--panel2:#111735;--text:#f8fafc;--muted:#94a3b8;--gold:#facc15;--line:rgba(255,255,255,.11);--red:#ef4444;--green:#22c55e;--blue:#38bdf8;}
-    *{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at top,#111827 0,#050816 48%,#020617 100%);color:var(--text);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh;padding:24px;}
-    .wrap{max-width:1100px;margin:0 auto}.top{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:22px}.brand{font-weight:900;font-size:24px}.brand span{color:var(--gold)}
-    a{color:inherit}.btn{border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--text);padding:10px 14px;border-radius:14px;text-decoration:none;cursor:pointer;font-weight:800}.btn.gold{background:linear-gradient(135deg,#fde047,#f59e0b);color:#111827;border:0}.btn.danger{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35)}.btn:disabled{opacity:.55;cursor:not-allowed}
-    .card{background:linear-gradient(180deg,rgba(17,24,39,.9),rgba(15,23,42,.82));border:1px solid var(--line);border-radius:24px;padding:20px;box-shadow:0 20px 70px rgba(0,0,0,.35)}
-    .controls{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 18px}.pill{padding:8px 12px;border:1px solid var(--line);border-radius:999px;cursor:pointer;color:var(--muted);font-weight:800}.pill.active{background:rgba(250,204,21,.16);color:var(--gold);border-color:rgba(250,204,21,.35)}
-    .report{border:1px solid var(--line);border-radius:18px;padding:16px;background:rgba(255,255,255,.04);margin:12px 0}.report-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.url{font-weight:900;word-break:break-all}.meta,.msg{color:var(--muted);font-size:14px;line-height:1.6}.badge{display:inline-flex;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:900;text-transform:uppercase}.pending{background:rgba(250,204,21,.14);color:#fde047}.approved{background:rgba(34,197,94,.14);color:#86efac}.rejected{background:rgba(239,68,68,.14);color:#fca5a5}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.empty{color:var(--muted);padding:20px;text-align:center}.loader{display:none;color:var(--gold);font-weight:900;margin:12px 0}.loader.show{display:block}
-    textarea{width:100%;margin-top:10px;background:#020617;color:var(--text);border:1px solid var(--line);border-radius:14px;padding:10px;min-height:70px;resize:vertical}
+    :root {{ --bg:#050816;--panel:#0b1024;--text:#f8fafc;--muted:#9fb0ca;--gold:#facc15;--line:rgba(255,255,255,.11);--red:#fb7185;--green:#86efac; }}
+    *{{box-sizing:border-box}}
+    body{{margin:0;background:radial-gradient(circle at top,#111827 0,#050816 48%,#020617 100%);color:var(--text);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh;padding:28px;}}
+    .wrap{{max-width:1180px;margin:0 auto}}
+    .top{{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:22px;flex-wrap:wrap}}
+    .brand{{font-weight:950;font-size:28px;letter-spacing:-.03em}} .brand span{{color:var(--gold)}}
+    .subtitle{{color:#bad3f5;line-height:1.55;font-size:15px;margin-top:6px;max-width:680px}}
+    .nav{{display:flex;gap:10px;flex-wrap:wrap}}
+    a,.btn{{color:inherit}}
+    .btn{{border:1px solid var(--line);background:rgba(255,255,255,.06);padding:11px 15px;border-radius:14px;text-decoration:none;font-weight:900;display:inline-flex;align-items:center;justify-content:center}}
+    .btn.gold{{background:linear-gradient(135deg,#fde047,#f59e0b);color:#111827;border:0}}
+    .card{{background:linear-gradient(180deg,rgba(17,24,39,.9),rgba(15,23,42,.82));border:1px solid var(--line);border-radius:24px;padding:22px;box-shadow:0 20px 70px rgba(0,0,0,.35);margin-bottom:18px}}
+    h2{{margin:0 0 12px;font-size:22px}}
+    .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:14px}}
+    .stat-card{{background:rgba(255,255,255,.045);border:1px solid var(--line);border-radius:18px;padding:16px}}
+    .stat-number{{font-size:32px;font-weight:950;font-family:Georgia,serif}}
+    .stat-label{{color:var(--muted);text-transform:uppercase;letter-spacing:.12em;font-size:12px;margin-top:5px}}
+    .item{{border:1px solid var(--line);background:rgba(255,255,255,.04);border-radius:18px;padding:16px;margin:12px 0}}
+    .item.compact{{padding:14px}}
+    .item-top{{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}}
+    .url{{font-weight:950;word-break:break-all;line-height:1.35}}
+    .meta{{color:var(--muted);font-size:13px;line-height:1.6;margin-top:6px}}
+    .message{{color:#dbeafe;background:rgba(255,255,255,.035);border:1px solid var(--line);border-radius:14px;padding:10px;margin-top:10px;line-height:1.6}}
+    .signals{{color:#cbd5e1;font-size:14px;line-height:1.6;margin-top:10px}}
+    .badge{{display:inline-flex;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:950;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}}
+    .badge.good{{background:rgba(34,197,94,.13);color:var(--green);border:1px solid rgba(34,197,94,.3)}}
+    .badge.warn{{background:rgba(250,204,21,.13);color:#fde047;border:1px solid rgba(250,204,21,.3)}}
+    .badge.bad{{background:rgba(244,63,94,.13);color:var(--red);border:1px solid rgba(244,63,94,.3)}}
+    .badge.neutral{{background:rgba(148,163,184,.13);color:#cbd5e1;border:1px solid rgba(148,163,184,.25)}}
+    .empty,.empty-mini{{color:var(--muted);text-align:center;padding:20px}}
+    .error-box{{border:1px solid rgba(251,113,133,.35);background:rgba(251,113,133,.1);color:#fecdd3;border-radius:18px;padding:16px;margin-bottom:18px;line-height:1.6}}
+    .note{{border:1px solid rgba(250,204,21,.25);background:rgba(250,204,21,.08);color:#fde68a;border-radius:18px;padding:14px;line-height:1.6;margin-bottom:18px}}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="top">
       <div>
-        <div class="brand">Lida<span>Shield</span> Admin</div>
-        <div class="meta">Review user reports before they enter the verified scam database.</div>
+        <div class="brand">Lida<span>Shield</span> Intelligence</div>
+        <div class="subtitle">Server-rendered admin intelligence view. No endless loading spinner. Auto-triage sorts reports by evidence strength before anything enters the verified scam database.</div>
       </div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;">
+      <div class="nav">
         <a class="btn" href="/dashboard">Dashboard</a>
         <a class="btn" href="/admin/database-stats">Database stats</a>
+        <a class="btn gold" href="/admin/reports">Refresh</a>
       </div>
     </div>
 
-    <div class="card">
-      <h2 style="margin-top:0;">Report review queue</h2>
-      <div class="meta">Approve only when the report looks genuinely suspicious. Rejected reports never enter scam_urls.</div>
-      <div class="controls">
-        <button class="pill active" data-status="pending">Pending</button>
-        <button class="pill" data-status="approved">Approved</button>
-        <button class="pill" data-status="rejected">Rejected</button>
-        <button class="btn" onclick="loadReports()">Refresh</button>
-      </div>
-      <div id="loader" class="loader">Loading reports...</div>
-      <div id="reports"><div class="empty">Loading pending reports...</div></div>
-    </div>
+    {db_error_html}
+
+    <div class="note"><b>Direction changed:</b> this page is now an intelligence console, not a slow manual approval queue. AI-style triage helps rank reports, but verified evidence still decides what becomes part of LidaShield's public scam database.</div>
+
+    <div class="card"><h2>Report status</h2><div class="subtitle">Latest user-submitted reports by review status.</div><div class="grid">{count_cards(report_counts)}</div></div>
+    <div class="card"><h2>Intelligence event status</h2><div class="subtitle">Evidence events generated from reports, scans, and threat intelligence.</div><div class="grid">{count_cards(event_counts)}</div></div>
+    <div class="card"><h2>Latest triaged reports</h2><div class="subtitle">These reports are auto-scored. High scores are important signals, not automatic truth.</div>{report_rows(reports)}</div>
+    <div class="card"><h2>Latest intelligence events</h2><div class="subtitle">This is the real LidaShield data engine layer.</div>{event_rows(events)}</div>
   </div>
-
-<script>
-let currentStatus = "pending";
-const $ = id => document.getElementById(id);
-
-function escapeHtml(text){
-  return String(text || "").replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;","\"":"&quot;"}[ch]));
-}
-
-function badge(status){
-  const s = status || "pending";
-  return `<span class="badge ${s}">${escapeHtml(s)}</span>`;
-}
-
-async function loadReports(){
-  $("loader").classList.add("show");
-  $("reports").innerHTML = `<div class="empty">Loading ${escapeHtml(currentStatus)} reports...</div>`;
-
-  try{
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-    const res = await fetch(`/admin/api/reports?status=${encodeURIComponent(currentStatus)}`, {
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-
-    const raw = await res.text();
-    let data;
-
-    try{
-      data = JSON.parse(raw);
-    }catch(parseError){
-      throw new Error(`Admin reports API did not return JSON. Status: ${res.status}. Response: ${raw.slice(0, 180)}`);
-    }
-
-    if(!res.ok){
-      throw new Error(data.error || data.details || "Could not load reports.");
-    }
-
-    if(!data.reports || data.reports.length === 0){
-      $("reports").innerHTML = `<div class="empty">No ${escapeHtml(currentStatus)} reports.</div>`;
-      return;
-    }
-
-    $("reports").innerHTML = data.reports.map(r => {
-      const canAct = r.status === "pending";
-      const url = r.url || r.normalized_url || "Message-only report";
-      const reporter = r.reporter_email ? ` · Reporter: ${escapeHtml(r.reporter_email)}` : "";
-
-      return `
-        <div class="report" id="report-${r.id}">
-          <div class="report-head">
-            <div class="url">${escapeHtml(url)}</div>
-            <div>${badge(r.status)}</div>
-          </div>
-          <div class="meta">Report #${escapeHtml(r.id)} · Category: ${escapeHtml(r.category || "url")} · Submitted: ${escapeHtml(r.created_at || "")}${reporter}</div>
-          <div class="meta">Auto-triage: ${escapeHtml(r.triage_status || "watchlist")} · Score: ${escapeHtml(r.triage_score || 0)}/100</div>
-          <div class="msg">${escapeHtml(r.message || "No message provided.")}</div>
-          ${r.triage_reasons ? `<div class="msg"><b>Signals:</b> ${escapeHtml(r.triage_reasons)}</div>` : ""}
-          ${r.review_notes ? `<div class="msg"><b>Review notes:</b> ${escapeHtml(r.review_notes)}</div>` : ""}
-          ${canAct ? `
-            <textarea id="notes-${r.id}" placeholder="Optional admin notes, e.g. phishing page, impersonation, fake login, etc."></textarea>
-            <div class="actions">
-              <button class="btn gold" onclick="approveReport(${r.id})">Approve into database</button>
-              <button class="btn danger" onclick="rejectReport(${r.id})">Reject</button>
-            </div>` : ""}
-        </div>`;
-    }).join("");
-  }catch(e){
-    const msg = e.name === "AbortError"
-      ? "Report queue took too long to load. Try Refresh, or open /admin/api/reports-count to check if reports exist."
-      : (e.message || "Could not load reports.");
-    $("reports").innerHTML = `<div class="empty">${escapeHtml(msg)}<br><br><button class="btn gold" onclick="loadReports()">Refresh reports</button></div>`;
-  }finally{
-    $("loader").classList.remove("show");
-  }
-}
-
-async function approveReport(id){
-  const notes = $(`notes-${id}`)?.value || "";
-  if(!confirm("Approve this report and add it to scam_urls?")){ return; }
-  await act(id, "approve", notes);
-}
-
-async function rejectReport(id){
-  const notes = $(`notes-${id}`)?.value || "";
-  if(!confirm("Reject this report?")){ return; }
-  await act(id, "reject", notes);
-}
-
-async function act(id, action, notes){
-  try{
-    const buttons = document.querySelectorAll(`#report-${id} button`);
-    buttons.forEach(b => b.disabled = true);
-    const res = await fetch(`/admin/api/reports/${id}/${action}`, {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({notes})
-    });
-    const data = await res.json();
-    if(!res.ok){ throw new Error(data.error || "Action failed."); }
-    await loadReports();
-  }catch(e){
-    alert(e.message || "Action failed.");
-    await loadReports();
-  }
-}
-
-document.querySelectorAll(".pill").forEach(btn => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".pill").forEach(p => p.classList.remove("active"));
-    btn.classList.add("active");
-    currentStatus = btn.dataset.status;
-    loadReports();
-  });
-});
-
-loadReports();
-</script>
 </body>
 </html>
-    """
-
+    '''
 
 
 @app.route("/admin/api/reports-count")
