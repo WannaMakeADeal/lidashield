@@ -15,6 +15,7 @@ import csv
 import io
 import re
 import json
+import hashlib
 
 # ============================================================
 # LidaShield v1
@@ -788,6 +789,22 @@ def ensure_db():
         extracted_urls TEXT,
         created_at TIMESTAMP DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS intelligence_events (
+        id SERIAL PRIMARY KEY,
+        user_id INT REFERENCES users(id) ON DELETE SET NULL,
+        report_id INT REFERENCES scam_reports(id) ON DELETE SET NULL,
+        url TEXT,
+        normalized_url TEXT,
+        domain TEXT,
+        message_hash TEXT,
+        source TEXT DEFAULT 'lidashield',
+        evidence_type TEXT DEFAULT 'community_report',
+        confidence_score INT DEFAULT 0,
+        reason TEXT,
+        status TEXT DEFAULT 'watchlist',
+        created_at TIMESTAMP DEFAULT NOW()
+    );
     """
 
     with get_db() as conn:
@@ -796,6 +813,12 @@ def ensure_db():
             cur.execute("ALTER TABLE scam_reports ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP")
             cur.execute("ALTER TABLE scam_reports ADD COLUMN IF NOT EXISTS reviewed_by INT REFERENCES users(id) ON DELETE SET NULL")
             cur.execute("ALTER TABLE scam_reports ADD COLUMN IF NOT EXISTS review_notes TEXT")
+            cur.execute("ALTER TABLE scam_reports ADD COLUMN IF NOT EXISTS triage_score INT DEFAULT 0")
+            cur.execute("ALTER TABLE scam_reports ADD COLUMN IF NOT EXISTS triage_status TEXT DEFAULT 'watchlist'")
+            cur.execute("ALTER TABLE scam_reports ADD COLUMN IF NOT EXISTS triage_reasons TEXT")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_intelligence_events_status ON intelligence_events(status)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_intelligence_events_normalized_url ON intelligence_events(normalized_url)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_scam_reports_triage_status ON scam_reports(triage_status)")
 
     _db_ready = True
 
@@ -849,6 +872,156 @@ def normalize_url(raw_url):
     ))
 
     return normalized
+
+
+def extract_domain(normalized_url):
+    try:
+        parsed = urlparse(normalized_url if normalized_url.startswith(("http://", "https://")) else "https://" + normalized_url)
+        return (parsed.netloc or "").lower().replace("www.", "", 1)
+    except Exception:
+        return ""
+
+
+def is_ip_address(host):
+    return bool(re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", host or ""))
+
+
+def triage_report_signal(raw_url="", message=""):
+    """
+    LidaShield Intelligence Engine v1.
+    Scores evidence and routes reports without blindly marking URLs dangerous.
+    """
+
+    raw_url = (raw_url or "").strip()
+    message = (message or "").strip()
+    score = 0
+    reasons = []
+    normalized_url = None
+    domain = ""
+
+    if raw_url:
+        try:
+            normalized_url = normalize_url(raw_url)
+            domain = extract_domain(normalized_url)
+        except ValueError:
+            reasons.append("Invalid URL format")
+            return {
+                "score": 5,
+                "status": "auto_rejected",
+                "reasons": reasons,
+                "normalized_url": None,
+                "domain": ""
+            }
+
+    if normalized_url and DATABASE_URL:
+        try:
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT verdict, source FROM scam_urls WHERE normalized_url = %s LIMIT 1",
+                        (normalized_url,)
+                    )
+                    existing = cur.fetchone()
+                    if existing and existing.get("verdict") == "dangerous":
+                        score += 90
+                        reasons.append(f"Already verified as dangerous in LidaShield database via {existing.get('source') or 'database'}")
+        except Exception:
+            reasons.append("Database evidence lookup unavailable during triage")
+
+    combined = f"{raw_url} {message}".lower()
+
+    high_risk_terms = [
+        "otp", "password", "login", "verify", "verification", "account suspended",
+        "suspended", "bank", "wallet", "paypal", "paynow", "singpass", "dbs",
+        "ocbc", "uob", "refund", "prize", "claim", "parcel", "delivery",
+        "urgent", "within 24", "click", "security alert", "confirm your account"
+    ]
+
+    hits = [term for term in high_risk_terms if term in combined]
+    if hits:
+        score += min(35, 8 * len(hits))
+        reasons.append("Suspicious scam-language signals: " + ", ".join(hits[:6]))
+
+    if domain:
+        if is_ip_address(domain):
+            score += 20
+            reasons.append("URL uses raw IP address instead of normal domain")
+
+        if domain.startswith("xn--"):
+            score += 25
+            reasons.append("Domain uses punycode, which can be used for impersonation")
+
+        if domain.count("-") >= 3:
+            score += 12
+            reasons.append("Domain contains many hyphens")
+
+        suspicious_tlds = (".xyz", ".top", ".click", ".cyou", ".quest", ".mom", ".rest", ".sbs")
+        if domain.endswith(suspicious_tlds):
+            score += 12
+            reasons.append("Domain uses a high-risk low-trust TLD pattern")
+
+        brand_terms = ["dbs", "ocbc", "uob", "singpass", "paypal", "google", "microsoft", "apple"]
+        official_domains = ["dbs.com", "ocbc.com", "uob.com.sg", "paypal.com", "google.com", "microsoft.com", "apple.com"]
+        if any(b in domain for b in brand_terms) and not any(domain.endswith(good) for good in official_domains):
+            score += 25
+            reasons.append("Domain appears to contain a trusted brand name but is not an official domain")
+
+    if raw_url and len(raw_url) > 120:
+        score += 10
+        reasons.append("URL is unusually long")
+
+    score = max(0, min(100, score))
+
+    if score >= 90:
+        status = "verified"
+    elif score >= 65:
+        status = "high_risk"
+    elif score >= 25:
+        status = "watchlist"
+    else:
+        status = "low_signal"
+
+    if not reasons:
+        reasons.append("No strong automated evidence found yet")
+
+    return {
+        "score": score,
+        "status": status,
+        "reasons": reasons,
+        "normalized_url": normalized_url,
+        "domain": domain
+    }
+
+
+def insert_intelligence_event(cur, user_id=None, report_id=None, raw_url=None, message=None, triage=None, source="community_report", evidence_type="community_report"):
+    triage = triage or triage_report_signal(raw_url, message)
+    normalized_url = triage.get("normalized_url")
+    domain = triage.get("domain") or (extract_domain(normalized_url) if normalized_url else "")
+    message_hash = hashlib.sha256((message or "").encode("utf-8")).hexdigest() if message else None
+    reason = "; ".join(triage.get("reasons") or [])
+
+    cur.execute(
+        """
+        INSERT INTO intelligence_events
+        (user_id, report_id, url, normalized_url, domain, message_hash, source, evidence_type, confidence_score, reason, status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            user_id,
+            report_id,
+            raw_url,
+            normalized_url,
+            domain,
+            message_hash,
+            source,
+            evidence_type,
+            triage.get("score", 0),
+            reason,
+            triage.get("status", "watchlist")
+        )
+    )
+    return cur.fetchone()
 
 
 def encode_url_for_virustotal(url):
@@ -1959,6 +2132,37 @@ def admin_import_test_record():
 
 
 
+
+@app.route("/admin/api/intelligence-summary")
+def admin_api_intelligence_summary():
+    admin_user, admin_error = require_admin()
+    if admin_error:
+        return admin_error
+
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '5000ms'")
+                cur.execute("SELECT status, COUNT(*) AS count FROM intelligence_events GROUP BY status ORDER BY count DESC")
+                by_status = cur.fetchall()
+                cur.execute("SELECT evidence_type, COUNT(*) AS count FROM intelligence_events GROUP BY evidence_type ORDER BY count DESC")
+                by_type = cur.fetchall()
+                cur.execute(
+                    """
+                    SELECT id, url, domain, evidence_type, confidence_score, status, reason, created_at::text AS created_at
+                    FROM intelligence_events
+                    ORDER BY created_at DESC
+                    LIMIT 20
+                    """
+                )
+                recent = cur.fetchall()
+
+        return jsonify({"ok": True, "by_status": by_status, "by_type": by_type, "recent": recent})
+    except Exception as e:
+        app.logger.exception("Intelligence summary failed")
+        return jsonify({"ok": False, "error": "Intelligence summary failed", "details": str(e), "type": type(e).__name__}), 500
+
+
 @app.route("/admin/reports")
 def admin_reports_page():
     """Admin UI for reviewing user-submitted scam reports."""
@@ -2068,7 +2272,9 @@ async function loadReports(){
             <div>${badge(r.status)}</div>
           </div>
           <div class="meta">Report #${escapeHtml(r.id)} · Category: ${escapeHtml(r.category || "url")} · Submitted: ${escapeHtml(r.created_at || "")}${reporter}</div>
+          <div class="meta">Auto-triage: ${escapeHtml(r.triage_status || "watchlist")} · Score: ${escapeHtml(r.triage_score || 0)}/100</div>
           <div class="msg">${escapeHtml(r.message || "No message provided.")}</div>
+          ${r.triage_reasons ? `<div class="msg"><b>Signals:</b> ${escapeHtml(r.triage_reasons)}</div>` : ""}
           ${r.review_notes ? `<div class="msg"><b>Review notes:</b> ${escapeHtml(r.review_notes)}</div>` : ""}
           ${canAct ? `
             <textarea id="notes-${r.id}" placeholder="Optional admin notes, e.g. phishing page, impersonation, fake login, etc."></textarea>
@@ -2174,6 +2380,7 @@ def admin_api_reports():
                 cur.execute(
                     """
                     SELECT r.id, r.url, r.normalized_url, r.message, r.category, r.status,
+                           r.triage_score, r.triage_status, r.triage_reasons,
                            r.created_at::text AS created_at, r.reviewed_at::text AS reviewed_at,
                            r.review_notes, u.email AS reporter_email
                     FROM scam_reports r
@@ -2394,12 +2601,8 @@ def report_scam():
 
     user = get_current_user()
 
-    normalized_url = None
-    if raw_url:
-        try:
-            normalized_url = normalize_url(raw_url)
-        except ValueError:
-            normalized_url = None
+    triage = triage_report_signal(raw_url, message)
+    normalized_url = triage.get("normalized_url")
 
     if not raw_url and not message:
         return jsonify({"error": "Please provide a URL or message to report."}), 400
@@ -2412,8 +2615,8 @@ def report_scam():
             cur.execute(
                 """
                 INSERT INTO scam_reports
-                (user_id, url, normalized_url, message, category, status)
-                VALUES (%s, %s, %s, %s, %s, 'pending')
+                (user_id, url, normalized_url, message, category, status, triage_score, triage_status, triage_reasons)
+                VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -2421,16 +2624,36 @@ def report_scam():
                     raw_url,
                     normalized_url,
                     message,
-                    category
+                    category,
+                    triage.get("score", 0),
+                    triage.get("status", "watchlist"),
+                    json.dumps(triage.get("reasons", []))
                 )
             )
             report_row = cur.fetchone()
+
+            if report_row:
+                insert_intelligence_event(
+                    cur,
+                    user_id=user["id"] if user else None,
+                    report_id=report_row["id"],
+                    raw_url=raw_url,
+                    message=message,
+                    triage=triage,
+                    source="community_report",
+                    evidence_type="community_report"
+                )
 
     return jsonify({
         "ok": True,
         "status": "pending",
         "report_id": report_row["id"] if report_row else None,
-        "message": "Report received. It is now pending review and will not affect the public verdict until verified."
+        "message": "Report received. LidaShield has triaged it automatically and it will not affect the public verdict until verified.",
+        "triage": {
+            "score": triage.get("score", 0),
+            "status": triage.get("status", "watchlist"),
+            "reasons": triage.get("reasons", [])[:5]
+        }
     })
 
 
