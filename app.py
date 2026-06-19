@@ -2005,6 +2005,7 @@ def admin_reports_page():
         <button class="pill active" data-status="pending">Pending</button>
         <button class="pill" data-status="approved">Approved</button>
         <button class="pill" data-status="rejected">Rejected</button>
+        <button class="btn" onclick="loadReports()">Refresh</button>
       </div>
       <div id="loader" class="loader">Loading reports...</div>
       <div id="reports"><div class="empty">Loading pending reports...</div></div>
@@ -2029,7 +2030,14 @@ async function loadReports(){
   $("reports").innerHTML = `<div class="empty">Loading ${escapeHtml(currentStatus)} reports...</div>`;
 
   try{
-    const res = await fetch(`/admin/api/reports?status=${encodeURIComponent(currentStatus)}`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    const res = await fetch(`/admin/api/reports?status=${encodeURIComponent(currentStatus)}`, {
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
     const raw = await res.text();
     let data;
 
@@ -2071,7 +2079,10 @@ async function loadReports(){
         </div>`;
     }).join("");
   }catch(e){
-    $("reports").innerHTML = `<div class="empty">${escapeHtml(e.message || "Could not load reports.")}</div>`;
+    const msg = e.name === "AbortError"
+      ? "Report queue took too long to load. Try Refresh, or open /admin/api/reports-count to check if reports exist."
+      : (e.message || "Could not load reports.");
+    $("reports").innerHTML = `<div class="empty">${escapeHtml(msg)}<br><br><button class="btn gold" onclick="loadReports()">Refresh reports</button></div>`;
   }finally{
     $("loader").classList.remove("show");
   }
@@ -2155,24 +2166,36 @@ def admin_api_reports():
     if status not in ("pending", "approved", "rejected"):
         return jsonify({"error": "Invalid status."}), 400
 
-    with get_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT r.id, r.url, r.normalized_url, r.message, r.category, r.status,
-                       r.created_at::text AS created_at, r.reviewed_at::text AS reviewed_at, r.review_notes,
-                       u.email AS reporter_email
-                FROM scam_reports r
-                LEFT JOIN users u ON u.id = r.user_id
-                WHERE r.status = %s
-                ORDER BY r.created_at DESC
-                LIMIT 100
-                """,
-                (status,)
-            )
-            reports = cur.fetchall()
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                # Prevent a stuck admin query from making the page load forever.
+                cur.execute("SET LOCAL statement_timeout = '5000ms'")
+                cur.execute(
+                    """
+                    SELECT r.id, r.url, r.normalized_url, r.message, r.category, r.status,
+                           r.created_at::text AS created_at, r.reviewed_at::text AS reviewed_at,
+                           r.review_notes, u.email AS reporter_email
+                    FROM scam_reports r
+                    LEFT JOIN users u ON u.id = r.user_id
+                    WHERE r.status = %s
+                    ORDER BY r.created_at DESC
+                    LIMIT 100
+                    """,
+                    (status,)
+                )
+                reports = cur.fetchall()
 
-    return jsonify({"ok": True, "status": status, "reports": reports})
+        return jsonify({"ok": True, "status": status, "reports": reports})
+
+    except Exception as e:
+        app.logger.exception("Admin reports API failed")
+        return jsonify({
+            "ok": False,
+            "error": "Admin reports API failed.",
+            "details": str(e),
+            "type": type(e).__name__
+        }), 500
 
 
 @app.route("/admin/api/reports/<int:report_id>/approve", methods=["POST"])
