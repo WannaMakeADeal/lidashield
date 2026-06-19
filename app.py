@@ -1277,6 +1277,120 @@ def lookup_own_database(normalized_url):
             return cur.fetchone()
 
 
+def lookup_intelligence_layer(normalized_url):
+    """
+    Reads LidaShield's intelligence layer for scanner warnings.
+    This does NOT mark a link as verified dangerous. It only returns unverified intelligence.
+    """
+    if not DATABASE_URL:
+        return None
+
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '4000ms'")
+                cur.execute(
+                    """
+                    SELECT COUNT(*) AS event_count,
+                           MAX(COALESCE(confidence_score, 0)) AS max_score
+                    FROM intelligence_events
+                    WHERE normalized_url = %s
+                    """,
+                    (normalized_url,)
+                )
+                ev = cur.fetchone() or {}
+
+                cur.execute(
+                    """
+                    SELECT COUNT(*) AS report_count,
+                           MAX(COALESCE(triage_score, 0)) AS max_report_score
+                    FROM scam_reports
+                    WHERE normalized_url = %s
+                    """,
+                    (normalized_url,)
+                )
+                rep = cur.fetchone() or {}
+
+                cur.execute(
+                    """
+                    SELECT reason, status, confidence_score
+                    FROM intelligence_events
+                    WHERE normalized_url = %s
+                    ORDER BY confidence_score DESC, created_at DESC
+                    LIMIT 1
+                    """,
+                    (normalized_url,)
+                )
+                top_event = cur.fetchone()
+
+                cur.execute(
+                    """
+                    SELECT triage_reasons, triage_status, triage_score
+                    FROM scam_reports
+                    WHERE normalized_url = %s
+                    ORDER BY triage_score DESC, created_at DESC
+                    LIMIT 1
+                    """,
+                    (normalized_url,)
+                )
+                top_report = cur.fetchone()
+
+        event_count = int(ev.get("event_count") or 0)
+        report_count = int(rep.get("report_count") or 0)
+        max_score = max(int(ev.get("max_score") or 0), int(rep.get("max_report_score") or 0))
+
+        if event_count == 0 and report_count == 0:
+            return None
+
+        reasons = []
+        if top_event and top_event.get("reason"):
+            reasons.extend([x.strip() for x in str(top_event.get("reason")).split(";") if x.strip()])
+        if top_report and top_report.get("triage_reasons"):
+            try:
+                parsed = json.loads(top_report.get("triage_reasons"))
+                if isinstance(parsed, list):
+                    reasons.extend([str(x) for x in parsed])
+            except Exception:
+                reasons.append(str(top_report.get("triage_reasons")))
+
+        # Deduplicate while preserving order.
+        seen = set()
+        unique_reasons = []
+        for reason in reasons:
+            key = reason.lower()
+            if key not in seen:
+                seen.add(key)
+                unique_reasons.append(reason)
+
+        if max_score >= 65:
+            return {
+                "verdict": "suspicious",
+                "score": max_score,
+                "source": "lidashield_intelligence",
+                "event_count": event_count,
+                "report_count": report_count,
+                "reasons": unique_reasons[:8],
+                "message": "LidaShield found unverified high-risk intelligence for this link. This is not a verified dangerous verdict yet, but you should treat it with caution."
+            }
+
+        if max_score >= 25 or report_count >= 2:
+            return {
+                "verdict": "unknown",
+                "score": max_score,
+                "source": "lidashield_watchlist",
+                "event_count": event_count,
+                "report_count": report_count,
+                "reasons": unique_reasons[:8],
+                "message": "LidaShield has watchlist intelligence for this link, but not enough verified evidence to mark it as suspicious yet."
+            }
+
+        return None
+
+    except Exception as e:
+        app.logger.exception("Intelligence lookup failed")
+        return None
+
+
 def save_scan_history(user_id, url, normalized_url, result):
     if not DATABASE_URL:
         return
@@ -1639,22 +1753,59 @@ def scan():
             **usage
         })
 
-    # 2. If not found, do NOT use VirusTotal or any external scanner.
+    # 2. Check LidaShield intelligence layer.
+    # This is not the verified scam database. It is an unverified warning layer.
+    intelligence = lookup_intelligence_layer(normalized_url)
+
+    if intelligence and intelligence.get("verdict") == "suspicious":
+        result = {
+            "url": raw_url,
+            "normalized_url": normalized_url,
+            "verdict": "suspicious",
+            "score": intelligence.get("score", 0),
+            "malicious": 0,
+            "suspicious": 1,
+            "harmless": 0,
+            "undetected": 0,
+            "flagged": intelligence.get("reasons", [])[:8],
+            "flagged_total": len(intelligence.get("reasons", [])),
+            "source": "lidashield_intelligence",
+            "known_by_lidashield": False,
+            "intelligence_warning": True,
+            "intelligence_event_count": intelligence.get("event_count", 0),
+            "report_count": intelligence.get("report_count", 0),
+            "message": intelligence.get("message")
+        }
+
+        save_scan_history(user["id"] if user else None, raw_url, normalized_url, result)
+
+        return jsonify({
+            **result,
+            **usage
+        })
+
+    if intelligence and intelligence.get("source") == "lidashield_watchlist":
+        watchlist_message = intelligence.get("message") or "LidaShield has watchlist intelligence for this link, but not enough evidence to warn strongly yet."
+    else:
+        watchlist_message = "No verified scam evidence was found in LidaShield yet. This does not prove the link is safe; it only means LidaShield has not verified it as suspicious."
+
+    # 3. If not found, do NOT use VirusTotal or any external scanner.
     # Unknown means: not verified in LidaShield yet.
     result = {
         "url": raw_url,
         "normalized_url": normalized_url,
         "verdict": "unknown",
-        "score": 0,
+        "score": intelligence.get("score", 0) if intelligence else 0,
         "malicious": 0,
         "suspicious": 0,
         "harmless": 0,
         "undetected": 0,
-        "flagged": [],
-        "flagged_total": 0,
-        "source": "lidashield_unverified",
+        "flagged": intelligence.get("reasons", [])[:5] if intelligence else [],
+        "flagged_total": len(intelligence.get("reasons", [])) if intelligence else 0,
+        "source": "lidashield_watchlist" if intelligence else "lidashield_unverified",
         "known_by_lidashield": False,
-        "message": "No verified scam evidence was found in LidaShield yet. This does not prove the link is safe; it only means LidaShield has not verified it as suspicious."
+        "intelligence_warning": bool(intelligence),
+        "message": watchlist_message
     }
 
     save_scan_history(user["id"] if user else None, raw_url, normalized_url, result)
