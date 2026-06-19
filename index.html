@@ -2028,15 +2028,69 @@ function showMessageResult(data){
   }
 }
 
+let reportSubmitting = false;
+let reportCooldownUntil = 0;
+let reportCooldownTimer = null;
+
+function startReportCooldown(seconds){
+  const btn = $("reportBtn");
+  if(!btn){ return; }
+
+  reportCooldownUntil = Date.now() + seconds * 1000;
+
+  if(reportCooldownTimer){
+    clearInterval(reportCooldownTimer);
+  }
+
+  reportCooldownTimer = setInterval(() => {
+    const remaining = Math.ceil((reportCooldownUntil - Date.now()) / 1000);
+
+    if(remaining <= 0){
+      clearInterval(reportCooldownTimer);
+      reportCooldownTimer = null;
+      btn.disabled = false;
+      btn.textContent = "Report this link";
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = `Report cooldown ${remaining}s`;
+  }, 250);
+}
+
 async function reportCurrent(){
+  const btn = $("reportBtn");
   const url = lastScannedUrl || $("urlInput").value.trim();
+
+  if(reportSubmitting){
+    return;
+  }
+
+  const cooldownRemaining = Math.ceil((reportCooldownUntil - Date.now()) / 1000);
+  if(cooldownRemaining > 0){
+    $("messageBox").textContent = `Please wait ${cooldownRemaining}s before sending another report.`;
+    return;
+  }
 
   if(!url){
     showError("Scan or paste a URL first before reporting.");
     return;
   }
 
+  reportSubmitting = true;
+
+  if(btn){
+    btn.dataset.originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Submitting report...";
+  }
+
+  $("messageBox").textContent = "Submitting report for admin review...";
+
   try{
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     const res = await fetch("/report", {
       method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -2044,8 +2098,11 @@ async function reportCurrent(){
         url,
         category:"url",
         message:"User reported this link from the LidaShield scanner."
-      })
+      }),
+      signal: controller.signal
     });
+
+    clearTimeout(timeoutId);
 
     const data = await res.json();
 
@@ -2054,10 +2111,20 @@ async function reportCurrent(){
     }
 
     $("messageBox").textContent = data.message || "Report received. It is now pending review and will not affect the public verdict until verified.";
+    startReportCooldown(30);
   }catch(e){
-    showError(e.message || "Report failed.");
+    const msg = e.name === "AbortError" ? "Report request took too long. Please try again." : (e.message || "Report failed.");
+    showError(msg);
+
+    if(btn){
+      btn.disabled = false;
+      btn.textContent = btn.dataset.originalText || "Report this link";
+    }
+  }finally{
+    reportSubmitting = false;
   }
 }
+
 
 function resetCheckoutState(){
   const overlay = $("checkoutOverlay");
