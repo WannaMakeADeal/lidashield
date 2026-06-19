@@ -2110,7 +2110,11 @@ async function reportCurrent(){
       throw new Error(data.details || data.error || "Report failed.");
     }
 
-    $("messageBox").textContent = data.message || "Report received. It is now pending review and will not affect the public verdict until verified.";
+    let reportMsg = data.message || "Report received. It is now pending review and will not affect the public verdict until verified.";
+    if(data.triage){
+      reportMsg += ` Auto-triage: ${data.triage.status || "watchlist"} (${data.triage.score || 0}/100).`;
+    }
+    $("messageBox").textContent = reportMsg;
     startReportCooldown(30);
   }catch(e){
     const msg = e.name === "AbortError" ? "Report request took too long. Please try again." : (e.message || "Report failed.");
