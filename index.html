@@ -1265,6 +1265,25 @@ h1 em{
   border-radius:14px;
   filter:drop-shadow(0 0 18px rgba(240,168,48,.28));
 }
+
+.legal-footer{
+  display:flex;
+  justify-content:center;
+  gap:18px;
+  flex-wrap:wrap;
+  padding:38px 20px 48px;
+  color:var(--muted);
+  font-family:DM Mono,monospace;
+  font-size:12px;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+}
+.legal-footer a{
+  color:var(--muted);
+  text-decoration:none;
+}
+.legal-footer a:hover{color:var(--gold2)}
+
 </style>
 </head>
 
@@ -1602,6 +1621,12 @@ h1 em{
   </footer>
 
 </div>
+
+<footer class="legal-footer">
+  <a href="/privacy">Privacy</a>
+  <a href="/terms">Terms</a>
+  <a href="/disclaimer">Disclaimer</a>
+</footer>
 
 <script>
 let currentUser = null;
