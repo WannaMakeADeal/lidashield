@@ -45,6 +45,23 @@ FLASK_SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "change-this-secret-key")
 ADMIN_EMAILS = os.environ.get("ADMIN_EMAILS", "")
 
 app.secret_key = FLASK_SECRET_KEY
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=APP_URL.startswith("https://"),
+    MAX_CONTENT_LENGTH=128 * 1024
+)
+
+# Lightweight in-memory abuse controls. This is enough for beta; later move to Redis/Cloudflare for scale.
+_RATE_LIMIT_BUCKETS = {}
+RATE_LIMIT_RULES = {
+    "/scan": (40, 60),
+    "/report": (8, 60),
+    "/check-message": (25, 60),
+    "/create-checkout-session": (8, 60),
+    "/billing/portal": (12, 60),
+}
+
 @app.errorhandler(Exception)
 def handle_unexpected_error(error):
     code = 500
@@ -699,6 +716,109 @@ loadDashboard();
 _db_ready = False
 
 
+
+# ============================================================
+# Security helpers
+# ============================================================
+
+def get_client_ip():
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.remote_addr or "unknown"
+
+
+def rate_limit_key():
+    user_id = session.get("user_id")
+    if user_id:
+        return f"user:{user_id}:{request.path}"
+    return f"ip:{get_client_ip()}:{request.path}"
+
+
+def check_rate_limit():
+    rule = RATE_LIMIT_RULES.get(request.path)
+    if not rule:
+        return None
+
+    max_hits, window_seconds = rule
+    now = time.time()
+    key = rate_limit_key()
+    hits = _RATE_LIMIT_BUCKETS.get(key, [])
+    hits = [t for t in hits if now - t < window_seconds]
+
+    if len(hits) >= max_hits:
+        retry_after = int(window_seconds - (now - hits[0])) if hits else window_seconds
+        response = jsonify({
+            "error": "Too many requests.",
+            "details": f"Please wait {max(1, retry_after)} seconds before trying again.",
+            "retry_after": max(1, retry_after)
+        })
+        response.status_code = 429
+        response.headers["Retry-After"] = str(max(1, retry_after))
+        return response
+
+    hits.append(now)
+    _RATE_LIMIT_BUCKETS[key] = hits
+
+    # Small cleanup to prevent unbounded memory growth in long-running workers.
+    if len(_RATE_LIMIT_BUCKETS) > 5000:
+        cutoff = now - 3600
+        for old_key in list(_RATE_LIMIT_BUCKETS.keys()):
+            _RATE_LIMIT_BUCKETS[old_key] = [t for t in _RATE_LIMIT_BUCKETS[old_key] if t > cutoff]
+            if not _RATE_LIMIT_BUCKETS[old_key]:
+                _RATE_LIMIT_BUCKETS.pop(old_key, None)
+
+    return None
+
+
+def is_same_origin_post_allowed():
+    if request.method != "POST":
+        return True
+
+    # Stripe cannot send browser Origin headers; webhook has its own signature verification.
+    if request.path == "/stripe/webhook":
+        return True
+
+    protected_paths = (
+        "/scan",
+        "/report",
+        "/check-message",
+        "/create-checkout-session",
+        "/billing/portal",
+    )
+
+    if not (request.path in protected_paths or request.path.startswith("/admin/api/")):
+        return True
+
+    origin = request.headers.get("Origin")
+    referer = request.headers.get("Referer")
+
+    expected_host = request.host
+    allowed_hosts = {expected_host, "www.lidashield.com", "lidashield.com"}
+
+    if origin:
+        parsed = urlparse(origin)
+        return parsed.netloc in allowed_hosts
+
+    if referer:
+        parsed = urlparse(referer)
+        return parsed.netloc in allowed_hosts
+
+    # Same-origin fetch usually sends Origin for POST. If neither exists, block protected browser APIs.
+    return False
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin-allow-popups")
+    response.headers.setdefault("Cache-Control", "no-store" if request.path.startswith(("/dashboard", "/admin")) else "public, max-age=300")
+    return response
+
+
 # ============================================================
 # Database helpers
 # ============================================================
@@ -842,6 +962,13 @@ def before_request():
         if target.endswith("?"):
             target = target[:-1]
         return redirect(target, code=301)
+
+    if not is_same_origin_post_allowed():
+        return jsonify({"error": "Blocked cross-site request.", "details": "Request origin did not match LidaShield."}), 403
+
+    limited = check_rate_limit()
+    if limited:
+        return limited
 
     ensure_db()
 
