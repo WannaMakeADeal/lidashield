@@ -60,6 +60,7 @@ RATE_LIMIT_RULES = {
     "/check-message": (25, 60),
     "/create-checkout-session": (8, 60),
     "/billing/portal": (12, 60),
+    "/api/feedback": (8, 60),
 }
 
 @app.errorhandler(Exception)
@@ -785,6 +786,7 @@ def is_same_origin_post_allowed():
         "/check-message",
         "/create-checkout-session",
         "/billing/portal",
+        "/api/feedback",
     )
 
     if not (request.path in protected_paths or request.path.startswith("/admin/api/")):
@@ -926,6 +928,18 @@ def ensure_db():
         status TEXT DEFAULT 'watchlist',
         created_at TIMESTAMP DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS feedback_requests (
+        id SERIAL PRIMARY KEY,
+        user_id INT REFERENCES users(id) ON DELETE SET NULL,
+        request_type TEXT DEFAULT 'feedback',
+        email TEXT,
+        subject TEXT,
+        url TEXT,
+        message TEXT NOT NULL,
+        status TEXT DEFAULT 'new',
+        created_at TIMESTAMP DEFAULT NOW()
+    );
     """
 
     with get_db() as conn:
@@ -948,6 +962,8 @@ def ensure_db():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_intelligence_events_entity_key ON intelligence_events(entity_key)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_scam_reports_triage_status ON scam_reports(triage_status)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_scam_reports_normalized_url ON scam_reports(normalized_url)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_requests_status ON feedback_requests(status)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_requests_type ON feedback_requests(request_type)")
 
     _db_ready = True
 
@@ -2506,6 +2522,7 @@ def admin_reports_page():
                     FROM intelligence_events
                     WHERE domain IS NOT NULL AND domain <> ''
                     GROUP BY domain
+                    HAVING MAX(COALESCE(confidence_score, 0)) > 0
                     ORDER BY max_score DESC, event_count DESC
                     LIMIT 12
                 ''')
@@ -2517,7 +2534,7 @@ def admin_reports_page():
                     FROM scam_reports
                     WHERE normalized_url IS NOT NULL
                     GROUP BY normalized_url
-                    HAVING COUNT(*) > 1
+                    HAVING COUNT(*) > 1 AND MAX(COALESCE(triage_score, 0)) > 0
                     ORDER BY report_count DESC, max_score DESC
                     LIMIT 12
                 ''')
@@ -2632,7 +2649,7 @@ def admin_reports_page():
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>LidaShield Intelligence Admin</title>
 <style>
 :root{{--bg:#050816;--panel:#0b1024;--text:#f8fafc;--muted:#9fb0ca;--gold:#facc15;--line:rgba(255,255,255,.11);--red:#fb7185;--green:#86efac}}*{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(circle at top,#111827 0,#050816 48%,#020617 100%);color:var(--text);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh;padding:28px}}.wrap{{max-width:1180px;margin:0 auto}}.top{{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:22px;flex-wrap:wrap}}.brand{{font-weight:950;font-size:28px;letter-spacing:-.03em}}.brand span{{color:var(--gold)}}.subtitle{{color:#bad3f5;line-height:1.55;font-size:15px;margin-top:6px;max-width:720px}}.nav{{display:flex;gap:10px;flex-wrap:wrap}}a,.btn{{color:inherit}}.btn{{border:1px solid var(--line);background:rgba(255,255,255,.06);padding:11px 15px;border-radius:14px;text-decoration:none;font-weight:900;display:inline-flex;align-items:center;justify-content:center}}.btn.gold{{background:linear-gradient(135deg,#fde047,#f59e0b);color:#111827;border:0}}.card{{background:linear-gradient(180deg,rgba(17,24,39,.9),rgba(15,23,42,.82));border:1px solid var(--line);border-radius:24px;padding:22px;box-shadow:0 20px 70px rgba(0,0,0,.35);margin-bottom:18px}}h2{{margin:0 0 12px;font-size:22px}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:14px}}.two{{display:grid;grid-template-columns:1fr 1fr;gap:18px}}@media(max-width:800px){{.two{{grid-template-columns:1fr}}}}.stat-card{{background:rgba(255,255,255,.045);border:1px solid var(--line);border-radius:18px;padding:16px}}.stat-number{{font-size:32px;font-weight:950;font-family:Georgia,serif}}.stat-label{{color:var(--muted);text-transform:uppercase;letter-spacing:.12em;font-size:12px;margin-top:5px}}.item{{border:1px solid var(--line);background:rgba(255,255,255,.04);border-radius:18px;padding:16px;margin:12px 0}}.item.compact{{padding:14px}}.item-top{{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}}.url{{font-weight:950;word-break:break-all;line-height:1.35}}.meta{{color:var(--muted);font-size:13px;line-height:1.6;margin-top:6px}}.message{{color:#dbeafe;background:rgba(255,255,255,.035);border:1px solid var(--line);border-radius:14px;padding:10px;margin-top:10px;line-height:1.6}}.signals{{color:#cbd5e1;font-size:14px;line-height:1.6;margin-top:10px}}.badge{{display:inline-flex;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:950;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}}.badge.good{{background:rgba(34,197,94,.13);color:var(--green);border:1px solid rgba(34,197,94,.3)}}.badge.warn{{background:rgba(250,204,21,.13);color:#fde047;border:1px solid rgba(250,204,21,.3)}}.badge.bad{{background:rgba(244,63,94,.13);color:var(--red);border:1px solid rgba(244,63,94,.3)}}.badge.neutral{{background:rgba(148,163,184,.13);color:#cbd5e1;border:1px solid rgba(148,163,184,.25)}}.empty,.empty-mini{{color:var(--muted);text-align:center;padding:20px}}.error-box{{border:1px solid rgba(251,113,133,.35);background:rgba(251,113,133,.1);color:#fecdd3;border-radius:18px;padding:16px;margin-bottom:18px;line-height:1.6}}.note{{border:1px solid rgba(250,204,21,.25);background:rgba(250,204,21,.08);color:#fde68a;border-radius:18px;padding:14px;line-height:1.6;margin-bottom:18px}}.mini-row{{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;border-bottom:1px solid var(--line);padding:12px 0;color:#dbeafe}}.mini-row:last-child{{border-bottom:0}}.mini-row span{{word-break:break-all}}.mini-row small{{color:var(--muted)}}
-</style></head><body><div class="wrap"><div class="top"><div><div class="brand">Lida<span>Shield</span> Intelligence</div><div class="subtitle">Server-rendered intelligence console. Auto-triage now detects duplicate reports, clusters risky domains, and filters obvious junk before anything enters the verified scam database.</div></div><div class="nav"><a class="btn" href="/dashboard">Dashboard</a><a class="btn" href="/admin/database-stats">Database stats</a><a class="btn gold" href="/admin/reports">Refresh</a></div></div>{db_error_html}<div class="note"><b>Batch 24 active:</b> duplicate reports now become a signal, not a manual headache. High-risk reports are intelligence leads; only verified evidence should affect public verdicts.</div><div class="card"><h2>Report status</h2><div class="subtitle">Latest user-submitted reports by review status.</div><div class="grid">{count_cards(report_counts)}</div></div><div class="card"><h2>Intelligence event status</h2><div class="subtitle">Evidence events generated from reports, scans, and threat intelligence.</div><div class="grid">{count_cards(event_counts)}</div></div><div class="two"><div class="card"><h2>Top risky domains</h2><div class="subtitle">Domains ranked by current intelligence confidence.</div>{domain_rows(risky_domains)}</div><div class="card"><h2>Duplicate URL clusters</h2><div class="subtitle">Repeated reports are grouped here instead of becoming endless manual work.</div>{duplicate_rows(duplicate_urls)}</div></div><div class="card"><h2>Latest triaged reports</h2><div class="subtitle">These reports are auto-scored. High scores are important signals, not automatic truth.</div>{report_rows(reports)}</div><div class="card"><h2>Latest intelligence events</h2><div class="subtitle">This is the real LidaShield data engine layer.</div>{event_rows(events)}</div></div></body></html>'''
+</style></head><body><div class="wrap"><div class="top"><div><div class="brand">Lida<span>Shield</span> Intelligence</div><div class="subtitle">Server-rendered intelligence console. Auto-triage now detects duplicate reports, clusters risky domains, and filters obvious junk before anything enters the verified scam database.</div></div><div class="nav"><a class="btn" href="/dashboard">Dashboard</a><a class="btn" href="/admin/database-stats">Database stats</a><a class="btn" href="/admin/feedback">Feedback</a><a class="btn gold" href="/admin/reports">Refresh</a></div></div>{db_error_html}<div class="note"><b>Batch 24 active:</b> duplicate reports now become a signal, not a manual headache. High-risk reports are intelligence leads; only verified evidence should affect public verdicts.</div><div class="card"><h2>Report status</h2><div class="subtitle">Latest user-submitted reports by review status.</div><div class="grid">{count_cards(report_counts)}</div></div><div class="card"><h2>Intelligence event status</h2><div class="subtitle">Evidence events generated from reports, scans, and threat intelligence.</div><div class="grid">{count_cards(event_counts)}</div></div><div class="two"><div class="card"><h2>Top risky domains</h2><div class="subtitle">Domains ranked by current intelligence confidence.</div>{domain_rows(risky_domains)}</div><div class="card"><h2>Duplicate URL clusters</h2><div class="subtitle">Repeated reports are grouped here instead of becoming endless manual work.</div>{duplicate_rows(duplicate_urls)}</div></div><div class="card"><h2>Latest triaged reports</h2><div class="subtitle">These reports are auto-scored. High scores are important signals, not automatic truth.</div>{report_rows(reports)}</div><div class="card"><h2>Latest intelligence events</h2><div class="subtitle">This is the real LidaShield data engine layer.</div>{event_rows(events)}</div></div></body></html>'''
 
 
 @app.route("/admin/api/reports-count")
@@ -3390,6 +3407,223 @@ def disclaimer_page():
     <p>No scanner can detect every scam. Scammers change domains, wording, and tactics quickly. LidaShield reduces risk, but users must remain careful.</p>
     """
     return render_legal_page("Disclaimer", body)
+
+
+
+# ============================================================
+# Beta launch / feedback pages
+# ============================================================
+
+BETA_PAGE_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ title }} · LidaShield</title>
+  <style>
+    :root{--bg:#05060d;--panel:#111217;--text:#f7f3ec;--muted:#a8a19a;--gold:#f6bd48;--line:rgba(246,189,72,.18);--green:#8ef0c1;--red:#ff9ca4}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#17120a 0,#05060d 45%,#03040a 100%);color:var(--text);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.7}.wrap{max-width:930px;margin:0 auto;padding:42px 22px 80px}.top{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:32px;flex-wrap:wrap}.brand{font-family:Georgia,serif;font-size:30px;color:var(--gold);text-decoration:none}.nav{display:flex;gap:10px;flex-wrap:wrap}.btn{border:1px solid var(--line);border-radius:999px;padding:10px 14px;color:var(--text);text-decoration:none;background:rgba(255,255,255,.04);font-weight:900;cursor:pointer}.btn.gold{background:linear-gradient(135deg,#fde047,#f59e0b);color:#111827;border:0}.card{border:1px solid var(--line);border-radius:28px;padding:30px;background:rgba(255,255,255,.045);box-shadow:0 30px 90px rgba(0,0,0,.35)}h1{font-family:Georgia,serif;font-size:48px;font-weight:400;margin:0 0 8px}h2{margin-top:30px;color:var(--gold);font-size:20px}.muted{color:var(--muted)}p,li{color:#ddd7cd}.notice{border:1px solid rgba(246,189,72,.25);background:rgba(246,189,72,.08);border-radius:18px;padding:14px 16px;margin:20px 0;color:#f6e8c8}label{display:block;margin:15px 0 7px;color:#f6e8c8;font-weight:800}input,select,textarea{width:100%;border:1px solid var(--line);background:rgba(0,0,0,.35);color:var(--text);border-radius:16px;padding:13px 14px;font:inherit}textarea{min-height:150px;resize:vertical}.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:720px){.row{grid-template-columns:1fr}}.status{display:none;margin-top:16px;border-radius:16px;padding:13px 14px}.status.ok{display:block;border:1px solid rgba(142,240,193,.3);background:rgba(142,240,193,.1);color:var(--green)}.status.err{display:block;border:1px solid rgba(255,156,164,.3);background:rgba(255,156,164,.1);color:var(--red)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <a class="brand" href="/">LidaShield</a>
+      <div class="nav">
+        <a class="btn" href="/">Scanner</a>
+        <a class="btn" href="/privacy">Privacy</a>
+        <a class="btn" href="/terms">Terms</a>
+        <a class="btn" href="/disclaimer">Disclaimer</a>
+      </div>
+    </div>
+    <div class="card">
+      <h1>{{ title }}</h1>
+      <div class="muted">LidaShield beta feedback channel</div>
+      {{ intro|safe }}
+      <form id="feedbackForm">
+        <input type="hidden" id="requestType" value="{{ request_type }}">
+        <div class="row">
+          <div>
+            <label>Email</label>
+            <input id="email" type="email" value="{{ email }}" placeholder="your@email.com">
+          </div>
+          <div>
+            <label>Type</label>
+            <select id="typeSelect">
+              <option value="feedback">General feedback</option>
+              <option value="bug">Bug report</option>
+              <option value="missed_scam">Missed scam</option>
+              <option value="wrong_flag">Wrong flag / false positive</option>
+              <option value="business">Business / partnership</option>
+            </select>
+          </div>
+        </div>
+        <label>Related URL, optional</label>
+        <input id="url" type="text" placeholder="https://example.com">
+        <label>Subject</label>
+        <input id="subject" type="text" placeholder="Short summary">
+        <label>Message</label>
+        <textarea id="message" placeholder="Tell LidaShield what happened. Include screenshots/details if useful, but do not paste passwords, OTPs, or private banking information."></textarea>
+        <div style="margin-top:18px"><button class="btn gold" type="submit">Send to LidaShield</button></div>
+        <div id="formStatus" class="status"></div>
+      </form>
+    </div>
+  </div>
+<script>
+const qs = id => document.getElementById(id);
+const defaultType = qs('requestType').value;
+if(defaultType){ qs('typeSelect').value = defaultType; }
+qs('feedbackForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const status = qs('formStatus');
+  status.className = 'status';
+  status.textContent = '';
+  const body = {
+    type: qs('typeSelect').value,
+    email: qs('email').value.trim(),
+    url: qs('url').value.trim(),
+    subject: qs('subject').value.trim(),
+    message: qs('message').value.trim()
+  };
+  try{
+    const res = await fetch('/api/feedback', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const data = await res.json();
+    if(!res.ok){ throw new Error(data.details || data.error || 'Could not send feedback.'); }
+    status.className = 'status ok';
+    status.textContent = 'Received. LidaShield saved this for review.';
+    qs('message').value = '';
+  }catch(err){
+    status.className = 'status err';
+    status.textContent = err.message || 'Could not send feedback.';
+  }
+});
+</script>
+</body>
+</html>
+"""
+
+
+def render_beta_page(title, request_type, intro):
+    user = get_current_user()
+    email = user.get("email") if user else ""
+    return render_template_string(BETA_PAGE_TEMPLATE, title=title, request_type=request_type, intro=intro, email=email)
+
+
+@app.route("/contact")
+def contact_page():
+    intro = """
+    <div class=\"notice\"><b>Contact LidaShield:</b> Use this for business enquiries, feedback, partnership interest, or urgent product issues.</div>
+    <p class=\"muted\">Do not send passwords, OTPs, private banking details, or sensitive personal information.</p>
+    """
+    return render_beta_page("Contact LidaShield", "business", intro)
+
+
+@app.route("/feedback")
+def feedback_page():
+    intro = """
+    <div class=\"notice\"><b>Beta feedback:</b> Tell us what broke, what confused you, or what would make LidaShield more useful.</div>
+    <p class=\"muted\">Feedback helps improve the intelligence engine and product trust layer.</p>
+    """
+    return render_beta_page("Feedback", "feedback", intro)
+
+
+@app.route("/request-review")
+def request_review_page():
+    intro = """
+    <div class=\"notice\"><b>Request a review:</b> Use this if LidaShield missed a scam, or if a legitimate link was shown as suspicious.</div>
+    <p class=\"muted\">High-risk intelligence is not automatic truth. Review requests help reduce false positives and false negatives.</p>
+    """
+    return render_beta_page("Request Review", "wrong_flag", intro)
+
+
+@app.route("/api/feedback", methods=["POST"])
+def api_feedback():
+    data = request.get_json(silent=True) or {}
+    request_type = (data.get("type") or "feedback").strip().lower()
+    allowed = {"feedback", "bug", "missed_scam", "wrong_flag", "business"}
+    if request_type not in allowed:
+        request_type = "feedback"
+
+    email = (data.get("email") or "").strip()[:320]
+    subject = (data.get("subject") or "").strip()[:220]
+    url = (data.get("url") or "").strip()[:1200]
+    message = (data.get("message") or "").strip()
+
+    if len(message) < 5:
+        return jsonify({"error": "Message is too short.", "details": "Please describe what happened."}), 400
+
+    if len(message) > 5000:
+        return jsonify({"error": "Message is too long.", "details": "Please keep feedback under 5000 characters."}), 400
+
+    user = get_current_user()
+    if user and not email:
+        email = user.get("email") or ""
+
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO feedback_requests (user_id, request_type, email, subject, url, message, status)
+                VALUES (%s, %s, %s, %s, %s, %s, 'new')
+                RETURNING id
+                """,
+                (user["id"] if user else None, request_type, email, subject, url, message)
+            )
+            row = cur.fetchone()
+
+    return jsonify({"ok": True, "id": row["id"] if row else None, "message": "Feedback received."})
+
+
+@app.route("/admin/feedback")
+def admin_feedback_page():
+    admin_user, admin_error = require_admin()
+    if admin_error:
+        return admin_error
+
+    rows = []
+    counts = []
+    db_error = None
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '5000ms'")
+                cur.execute("SELECT request_type, COUNT(*) AS count FROM feedback_requests GROUP BY request_type ORDER BY count DESC")
+                counts = cur.fetchall()
+                cur.execute("""
+                    SELECT f.id, f.request_type, f.email, f.subject, f.url, f.message, f.status, f.created_at::text AS created_at, u.email AS account_email
+                    FROM feedback_requests f
+                    LEFT JOIN users u ON u.id = f.user_id
+                    ORDER BY f.created_at DESC
+                    LIMIT 60
+                """)
+                rows = cur.fetchall()
+    except Exception as ex:
+        db_error = f"{type(ex).__name__}: {ex}"
+
+    def e(value):
+        return html.escape(str(value if value is not None else ""))
+
+    count_html = ''.join(f"<div class='stat'><b>{e(c.get('count'))}</b><span>{e(c.get('request_type'))}</span></div>" for c in counts) or "<p>No feedback yet.</p>"
+    item_html = ''
+    for r in rows:
+        item_html += f"""
+        <div class='item'>
+          <div><b>#{e(r.get('id'))} · {e(r.get('request_type'))}</b> <span>{e(r.get('created_at'))}</span></div>
+          <div class='muted'>Email: {e(r.get('email') or r.get('account_email') or 'unknown')}</div>
+          <div class='muted'>Subject: {e(r.get('subject') or '')}</div>
+          <div class='muted'>URL: {e(r.get('url') or '')}</div>
+          <p>{e(r.get('message'))}</p>
+        </div>
+        """
+    if db_error:
+        item_html = f"<div class='err'>{e(db_error)}</div>" + item_html
+
+    return f"""
+<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>LidaShield Feedback Admin</title>
+<style>body{{margin:0;background:#050816;color:#f8fafc;font-family:Inter,system-ui;padding:28px}}.wrap{{max-width:1100px;margin:auto}}a{{color:#facc15}}.top{{display:flex;justify-content:space-between;gap:16px;align-items:center}}.card,.item{{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);border-radius:22px;padding:20px;margin:14px 0}}h1{{font-family:Georgia,serif;font-size:42px}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}}.stat{{border:1px solid rgba(250,204,21,.18);border-radius:18px;padding:16px}}.stat b{{display:block;font-size:32px}}.stat span,.muted{{color:#9fb0ca}}.err{{border:1px solid #fb7185;color:#fecdd3;padding:14px;border-radius:18px}}</style></head>
+<body><div class='wrap'><div class='top'><h1>LidaShield Feedback</h1><div><a href='/dashboard'>Dashboard</a> · <a href='/admin/reports'>Intelligence</a></div></div><div class='card'><h2>Feedback counts</h2><div class='grid'>{count_html}</div></div><div class='card'><h2>Latest feedback</h2>{item_html or '<p>No feedback yet.</p>'}</div></div></body></html>
+"""
 
 
 # ============================================================
