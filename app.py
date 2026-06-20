@@ -1373,7 +1373,9 @@ def lookup_intelligence_layer(normalized_url):
                 "message": "LidaShield found unverified high-risk intelligence for this link. This is not a verified dangerous verdict yet, but you should treat it with caution."
             }
 
-        if max_score >= 25 or report_count >= 2:
+        # Only show watchlist intelligence when there is a real risk signal.
+        # Duplicate reports with 0 score should not make a normal site look watchlisted.
+        if max_score >= 25:
             return {
                 "verdict": "unknown",
                 "score": max_score,
