@@ -981,6 +981,20 @@ def ensure_db():
         notes TEXT,
         created_at TIMESTAMP DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS lida_eval_cases (
+        id SERIAL PRIMARY KEY,
+        training_example_id INT REFERENCES training_examples(id) ON DELETE SET NULL,
+        input_type TEXT DEFAULT 'message',
+        input_text TEXT NOT NULL,
+        expected_verdict TEXT DEFAULT 'unknown',
+        expected_score INT DEFAULT 0,
+        expected_category TEXT DEFAULT 'general',
+        evidence_json TEXT,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(training_example_id)
+    );
     """
 
     with get_db() as conn:
@@ -997,6 +1011,10 @@ def ensure_db():
             cur.execute("ALTER TABLE intelligence_events ADD COLUMN IF NOT EXISTS signal_source_count INT DEFAULT 1")
             cur.execute("ALTER TABLE intelligence_events ADD COLUMN IF NOT EXISTS resolution TEXT")
             cur.execute("ALTER TABLE intelligence_events ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP DEFAULT NOW()")
+            cur.execute("ALTER TABLE training_examples ADD COLUMN IF NOT EXISTS review_notes TEXT")
+            cur.execute("ALTER TABLE training_examples ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP")
+            cur.execute("ALTER TABLE training_examples ADD COLUMN IF NOT EXISTS reviewed_by INT REFERENCES users(id) ON DELETE SET NULL")
+            cur.execute("ALTER TABLE training_examples ADD COLUMN IF NOT EXISTS gold BOOLEAN DEFAULT FALSE")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_intelligence_events_status ON intelligence_events(status)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_intelligence_events_normalized_url ON intelligence_events(normalized_url)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_intelligence_events_domain ON intelligence_events(domain)")
@@ -1010,6 +1028,8 @@ def ensure_db():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_training_examples_status ON training_examples(status)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_training_examples_label ON training_examples(label_verdict)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_training_examples_source ON training_examples(source_type, source_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_training_examples_gold ON training_examples(gold)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_lida_eval_cases_expected ON lida_eval_cases(expected_verdict)")
 
     _db_ready = True
 
@@ -3781,9 +3801,24 @@ def admin_feedback_page():
 
 
 
+
 # ============================================================
-# Lida training data factory
+# Lida training data quality lab
 # ============================================================
+
+def safe_json_loads(value, default=None):
+    """Small defensive JSON parser for old rows where JSON may be NULL/broken."""
+    if default is None:
+        default = {}
+    if value is None:
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except Exception:
+        return default
+
 
 def build_training_target(verdict, score, category, summary, evidence, indicators):
     """Create a clean supervised-fine-tuning target for future Lida model training."""
@@ -3804,9 +3839,11 @@ def sft_jsonl_record(example):
     target = safe_json_loads(example.get("target_json"), {})
     system = (
         "You are Lida, LidaShield's scam-intelligence AI analyst. "
-        "Analyze WhatsApp, SMS, email, URL, and scam evidence. "
-        "Use database evidence first, confidence second, and wording signals only as supporting evidence. "
-        "Never claim a link is safe just because it is unknown."
+        "Analyze WhatsApp, SMS, email, URL, phone-number, and scam evidence. "
+        "Use LidaShield database evidence first, relationships second, confidence third, "
+        "and wording signals only as supporting evidence. "
+        "Never claim a link is safe just because it is unknown. "
+        "Separate verified danger from unverified high-risk intelligence."
     )
     user_prompt = {
         "input_type": example.get("input_type") or "message",
@@ -3831,6 +3868,20 @@ def sft_jsonl_record(example):
     }
 
 
+def eval_jsonl_record(row):
+    return {
+        "input_type": row.get("input_type") or "message",
+        "input_text": row.get("input_text") or "",
+        "expected": {
+            "verdict": row.get("expected_verdict") or "unknown",
+            "score": int(row.get("expected_score") or 0),
+            "category": row.get("expected_category") or "general",
+        },
+        "evidence": safe_json_loads(row.get("evidence_json"), []),
+        "notes": row.get("notes") or ""
+    }
+
+
 def upsert_training_example(cur, source_type, source_id, input_type, input_text, label_verdict, label_score, label_category, indicators=None, evidence=None, summary=None, status="candidate"):
     indicators = indicators if isinstance(indicators, dict) else safe_json_loads(indicators, {})
     evidence = evidence if isinstance(evidence, list) else safe_json_loads(evidence, [])
@@ -3849,7 +3900,10 @@ def upsert_training_example(cur, source_type, source_id, input_type, input_text,
             extracted_indicators = EXCLUDED.extracted_indicators,
             evidence_json = EXCLUDED.evidence_json,
             target_json = EXCLUDED.target_json,
-            status = EXCLUDED.status,
+            status = CASE
+                WHEN training_examples.status IN ('approved','gold','rejected') THEN training_examples.status
+                ELSE EXCLUDED.status
+            END,
             updated_at = NOW()
         """,
         (
@@ -3881,18 +3935,9 @@ def rebuild_training_candidates(limit=500):
                 verdict = row.get("verdict") or "unknown"
                 category = "verified_or_high_risk" if score >= 65 else "unknown_or_low_signal"
                 upsert_training_example(
-                    cur,
-                    "analyst_observation",
-                    row.get("id"),
-                    row.get("input_type") or "message",
-                    input_text,
-                    verdict,
-                    score,
-                    category,
-                    row.get("extracted_indicators"),
-                    row.get("evidence_json"),
-                    row.get("analyst_summary"),
-                    "candidate"
+                    cur, "analyst_observation", row.get("id"), row.get("input_type") or "message",
+                    input_text, verdict, score, category, row.get("extracted_indicators"),
+                    row.get("evidence_json"), row.get("analyst_summary"), "candidate"
                 )
                 added += 1
 
@@ -3920,18 +3965,9 @@ def rebuild_training_candidates(limit=500):
                     evidence.append({"type":"triage_signal", "confidence":score, "detail":str(reason)})
                 indicators = {"urls": [url] if url else [], "domains": [domain_from_url(url)] if url else [], "phones": [], "emails": []}
                 upsert_training_example(
-                    cur,
-                    "scam_report",
-                    row.get("id"),
-                    row.get("category") or "url",
-                    input_text,
-                    verdict,
-                    score,
-                    status,
-                    indicators,
-                    evidence,
-                    "Community report converted into Lida training candidate.",
-                    "candidate"
+                    cur, "scam_report", row.get("id"), row.get("category") or "url", input_text,
+                    verdict, score, status, indicators, evidence,
+                    "Community report converted into Lida training candidate.", "candidate"
                 )
                 added += 1
 
@@ -3955,21 +3991,34 @@ def rebuild_training_candidates(limit=500):
                 indicators = {"urls": [url] if url else [], "domains": [domain_from_url(url)] if url else [], "phones": [], "emails": []}
                 evidence = [{"type":"user_feedback", "confidence":30, "detail":f"User submitted {request_type} feedback."}]
                 upsert_training_example(
-                    cur,
-                    "feedback_request",
-                    row.get("id"),
-                    "feedback",
-                    input_text,
-                    verdict,
-                    30,
-                    request_type,
-                    indicators,
-                    evidence,
-                    "Feedback should be used for human review and future model correction.",
-                    "candidate"
+                    cur, "feedback_request", row.get("id"), "feedback", input_text, verdict, 30,
+                    request_type, indicators, evidence,
+                    "Feedback should be used for human review and future model correction.", "candidate"
                 )
                 added += 1
     return added
+
+
+def training_readiness_summary():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS count FROM training_examples")
+            total = int(cur.fetchone().get("count") or 0)
+            cur.execute("SELECT COUNT(*) AS count FROM training_examples WHERE status IN ('approved','gold')")
+            approved = int(cur.fetchone().get("count") or 0)
+            cur.execute("SELECT COUNT(*) AS count FROM training_examples WHERE status = 'gold' OR gold = TRUE")
+            gold = int(cur.fetchone().get("count") or 0)
+            cur.execute("SELECT COUNT(*) AS count FROM training_examples WHERE status = 'rejected'")
+            rejected = int(cur.fetchone().get("count") or 0)
+            cur.execute("SELECT COUNT(*) AS count FROM lida_eval_cases")
+            eval_count = int(cur.fetchone().get("count") or 0)
+    score = 0
+    score += min(40, approved // 5)
+    score += min(25, gold * 2)
+    score += min(20, eval_count * 2)
+    score += 15 if rejected > 0 else 0
+    score = min(score, 100)
+    return {"total": total, "approved": approved, "gold": gold, "rejected": rejected, "eval_cases": eval_count, "readiness_score": score}
 
 
 @app.route("/admin/training-data")
@@ -3980,19 +4029,21 @@ def admin_training_data_page():
 
     counts = []
     latest = []
+    readiness = {}
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT status, label_verdict, COUNT(*) AS count FROM training_examples GROUP BY status, label_verdict ORDER BY count DESC")
+            cur.execute("SELECT status, label_verdict, COUNT(*) AS count FROM training_examples GROUP BY status, label_verdict ORDER BY status, count DESC")
             counts = cur.fetchall()
             cur.execute(
                 """
-                SELECT id, source_type, source_id, input_type, label_verdict, label_score, label_category, input_text, created_at
+                SELECT id, source_type, source_id, input_type, label_verdict, label_score, label_category, input_text, status, gold, created_at
                 FROM training_examples
-                ORDER BY id DESC
-                LIMIT 40
+                ORDER BY CASE status WHEN 'candidate' THEN 0 WHEN 'approved' THEN 1 WHEN 'gold' THEN 2 WHEN 'rejected' THEN 3 ELSE 4 END, id DESC
+                LIMIT 60
                 """
             )
             latest = cur.fetchall()
+    readiness = training_readiness_summary()
 
     def e2(x):
         return html.escape(str(x if x is not None else ""))
@@ -4002,24 +4053,87 @@ def admin_training_data_page():
         for c in counts
     ) or "<p>No training examples yet. Click Build training candidates.</p>"
 
+    ready_html = "".join(
+        f"<div class='stat'><b>{e2(v)}</b><span>{e2(k.replace('_',' '))}</span></div>" for k, v in readiness.items()
+    )
+
+    def action_buttons(row):
+        rid = e2(row.get('id'))
+        return f"""
+        <div class='actions'>
+          <form method='post' action='/admin/api/training/{rid}/approve'><button>Approve</button></form>
+          <form method='post' action='/admin/api/training/{rid}/gold'><button class='goldbtn'>Gold</button></form>
+          <form method='post' action='/admin/api/training/{rid}/reject'><button class='dangerbtn'>Reject</button></form>
+          <form method='post' action='/admin/api/training/{rid}/candidate'><button>Back to candidate</button></form>
+        </div>
+        """
+
     latest_html = "".join(
-        f"<div class='item'><div><b>#{e2(r.get('id'))} · {e2(r.get('label_verdict'))} · {e2(r.get('label_score'))}/100</b></div>"
+        f"<div class='item'><div><b>#{e2(r.get('id'))} · {e2(r.get('status'))} · {e2(r.get('label_verdict'))} · {e2(r.get('label_score'))}/100</b></div>"
         f"<div class='muted'>{e2(r.get('source_type'))} #{e2(r.get('source_id'))} · {e2(r.get('input_type'))} · {e2(r.get('label_category'))} · {e2(r.get('created_at'))}</div>"
-        f"<pre>{e2((r.get('input_text') or '')[:700])}</pre></div>"
+        f"<pre>{e2((r.get('input_text') or '')[:800])}</pre>{action_buttons(r)}</div>"
         for r in latest
     ) or "<p>No training candidates yet.</p>"
 
     return f"""
-<!doctype html><html><head><title>Lida Training Data</title><meta name='viewport' content='width=device-width,initial-scale=1'>
+<!doctype html><html><head><title>Lida Training Data Quality Lab</title><meta name='viewport' content='width=device-width,initial-scale=1'>
 <style>
-body{{margin:0;background:#070912;color:#f8f4ec;font-family:Inter,Arial,sans-serif;font-size:18px}}.wrap{{max-width:1720px;margin:0 auto;padding:56px 64px}}h1{{font-size:58px;margin:0 0 12px}}h2{{font-size:34px}}.top{{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}}a,.gold{{color:#ffd34d}}.btn{{display:inline-block;border:1px solid #3a3f50;border-radius:22px;padding:18px 26px;text-decoration:none;color:#fff;background:#151a28;font-weight:900;margin-left:10px}}.goldbtn{{background:#f8b633;color:#070912;border-color:#f8b633}}.card{{background:#101625;border:1px solid #283248;border-radius:28px;padding:34px;margin:28px 0}}.note{{background:#211b10;border:1px solid #8a650e;border-radius:24px;padding:24px;margin:28px 0;color:#ffe895}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}}.stat,.item{{background:#1a2130;border:1px solid #30394c;border-radius:22px;padding:22px;margin:16px 0}}.stat b{{display:block;font-size:44px}}.stat span,.muted{{color:#aecaef}}pre{{white-space:pre-wrap;font-family:ui-monospace,monospace;background:#0b0f19;border:1px solid #2b3346;border-radius:16px;padding:16px;color:#e8f0ff}}
-</style></head><body><div class='wrap'><div class='top'><div><h1>Lida Training Data Factory</h1><div class='muted'>This is the bridge from LidaShield's database to the future Lida open-source model. Database memory first. Model training second.</div></div><div><a class='btn' href='/dashboard'>Dashboard</a><a class='btn' href='/admin/reports'>Intelligence</a><a class='btn' href='/admin/feedback'>Feedback</a></div></div>
-<div class='note'><b>Rule:</b> Lida learns from labelled evidence. We do not train on random guesses. Analyst observations, scam reports, and user feedback become candidate examples first.</div>
-<div class='card'><h2>Actions</h2><form method='post' action='/admin/api/training/build' style='display:inline'><button class='btn goldbtn' type='submit'>Build training candidates</button></form><a class='btn' href='/admin/api/training/export-jsonl'>Download SFT JSONL</a><a class='btn' href='/admin/api/training/summary'>Training summary JSON</a></div>
+body{{margin:0;background:#070912;color:#f8f4ec;font-family:Inter,Arial,sans-serif;font-size:18px}}.wrap{{max-width:1720px;margin:0 auto;padding:56px 64px}}h1{{font-size:58px;margin:0 0 12px}}h2{{font-size:34px}}.top{{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}}a,.gold{{color:#ffd34d}}.btn{{display:inline-block;border:1px solid #3a3f50;border-radius:22px;padding:18px 26px;text-decoration:none;color:#fff;background:#151a28;font-weight:900;margin:6px}}button{{border:1px solid #3a3f50;border-radius:16px;padding:12px 18px;background:#151a28;color:#fff;font-weight:900;cursor:pointer}}.goldbtn{{background:#f8b633!important;color:#070912!important;border-color:#f8b633!important}}.dangerbtn{{background:#3b1220!important;color:#ff9db2!important;border-color:#743146!important}}.card{{background:#101625;border:1px solid #283248;border-radius:28px;padding:34px;margin:28px 0}}.note{{background:#211b10;border:1px solid #8a650e;border-radius:24px;padding:24px;margin:28px 0;color:#ffe895}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:18px}}.stat,.item{{background:#1a2130;border:1px solid #30394c;border-radius:22px;padding:22px;margin:16px 0}}.stat b{{display:block;font-size:44px}}.stat span,.muted{{color:#aecaef}}pre{{white-space:pre-wrap;font-family:ui-monospace,monospace;background:#0b0f19;border:1px solid #2b3346;border-radius:16px;padding:16px;color:#e8f0ff}}.actions{{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}}
+</style></head><body><div class='wrap'><div class='top'><div><h1>Lida Training Data Quality Lab</h1><div class='muted'>This is where Lida becomes trainable. Candidate data is not enough. We approve, reject, and mark gold examples before fine-tuning.</div></div><div><a class='btn' href='/dashboard'>Dashboard</a><a class='btn' href='/admin/reports'>Intelligence</a><a class='btn' href='/admin/feedback'>Feedback</a></div></div>
+<div class='note'><b>New rule:</b> Lida trains only on approved or gold examples. Candidate rows are raw material. Rejected rows become anti-examples and quality control.</div>
+<div class='card'><h2>Actions</h2><form method='post' action='/admin/api/training/build' style='display:inline'><button class='goldbtn' type='submit'>Build training candidates</button></form><form method='post' action='/admin/api/training/build-eval' style='display:inline'><button type='submit'>Build evaluation set</button></form><a class='btn' href='/admin/api/training/export-jsonl'>Download approved SFT JSONL</a><a class='btn' href='/admin/api/training/export-jsonl?status=candidate'>Download candidates JSONL</a><a class='btn' href='/admin/api/training/eval-jsonl'>Download eval JSONL</a><a class='btn' href='/admin/api/training/summary'>Summary JSON</a></div>
+<div class='card'><h2>Model readiness</h2><div class='grid'>{ready_html}</div></div>
 <div class='card'><h2>Training counts</h2><div class='grid'>{count_html}</div></div>
-<div class='card'><h2>Latest training candidates</h2>{latest_html}</div>
+<div class='card'><h2>Review training candidates</h2>{latest_html}</div>
 </div></body></html>
 """
+
+
+def update_training_status(example_id, status, gold=False, notes=""):
+    user = get_current_user()
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE training_examples
+                SET status=%s, gold=%s, reviewed_at=NOW(), reviewed_by=%s, review_notes=%s, updated_at=NOW()
+                WHERE id=%s
+                """,
+                (status, bool(gold), user.get("id") if user else None, notes, int(example_id))
+            )
+    return redirect("/admin/training-data")
+
+
+@app.route("/admin/api/training/<int:example_id>/approve", methods=["POST"])
+def admin_training_approve(example_id):
+    admin_check = require_admin()
+    if admin_check:
+        return admin_check
+    return update_training_status(example_id, "approved", False, "Approved for future Lida SFT training.")
+
+
+@app.route("/admin/api/training/<int:example_id>/gold", methods=["POST"])
+def admin_training_gold(example_id):
+    admin_check = require_admin()
+    if admin_check:
+        return admin_check
+    return update_training_status(example_id, "gold", True, "Gold-standard example for future Lida training/evaluation.")
+
+
+@app.route("/admin/api/training/<int:example_id>/reject", methods=["POST"])
+def admin_training_reject(example_id):
+    admin_check = require_admin()
+    if admin_check:
+        return admin_check
+    return update_training_status(example_id, "rejected", False, "Rejected from training data.")
+
+
+@app.route("/admin/api/training/<int:example_id>/candidate", methods=["POST"])
+def admin_training_candidate(example_id):
+    admin_check = require_admin()
+    if admin_check:
+        return admin_check
+    return update_training_status(example_id, "candidate", False, "Returned to candidate review.")
 
 
 @app.route("/admin/api/training/build", methods=["POST"])
@@ -4031,6 +4145,47 @@ def admin_build_training_data():
     return redirect("/admin/training-data")
 
 
+@app.route("/admin/api/training/build-eval", methods=["POST"])
+def admin_build_eval_cases():
+    admin_check = require_admin()
+    if admin_check:
+        return admin_check
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, input_type, input_text, label_verdict, label_score, label_category, evidence_json
+                FROM training_examples
+                WHERE status IN ('approved','gold') OR gold = TRUE
+                ORDER BY CASE WHEN gold = TRUE OR status='gold' THEN 0 ELSE 1 END, id DESC
+                LIMIT 300
+                """
+            )
+            rows = cur.fetchall()
+            for row in rows:
+                cur.execute(
+                    """
+                    INSERT INTO lida_eval_cases
+                    (training_example_id, input_type, input_text, expected_verdict, expected_score, expected_category, evidence_json, notes)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (training_example_id) DO UPDATE SET
+                        input_type=EXCLUDED.input_type,
+                        input_text=EXCLUDED.input_text,
+                        expected_verdict=EXCLUDED.expected_verdict,
+                        expected_score=EXCLUDED.expected_score,
+                        expected_category=EXCLUDED.expected_category,
+                        evidence_json=EXCLUDED.evidence_json
+                    """,
+                    (
+                        row.get("id"), row.get("input_type") or "message", row.get("input_text") or "",
+                        row.get("label_verdict") or "unknown", int(row.get("label_score") or 0),
+                        row.get("label_category") or "general", row.get("evidence_json") or "[]",
+                        "Built from approved/gold training examples."
+                    )
+                )
+    return redirect("/admin/training-data")
+
+
 @app.route("/admin/api/training/summary")
 def admin_training_summary():
     admin_check = require_admin()
@@ -4038,7 +4193,7 @@ def admin_training_summary():
         return admin_check
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT status, label_verdict, COUNT(*) AS count FROM training_examples GROUP BY status, label_verdict ORDER BY count DESC")
+            cur.execute("SELECT status, label_verdict, COUNT(*) AS count FROM training_examples GROUP BY status, label_verdict ORDER BY status, count DESC")
             counts = cur.fetchall()
             cur.execute("SELECT COUNT(*) AS count FROM analyst_observations")
             observations = cur.fetchone().get("count")
@@ -4046,7 +4201,7 @@ def admin_training_summary():
             reports = cur.fetchone().get("count")
             cur.execute("SELECT COUNT(*) AS count FROM feedback_requests")
             feedback = cur.fetchone().get("count")
-    return jsonify({"ok": True, "counts": counts, "source_rows": {"analyst_observations": observations, "scam_reports": reports, "feedback_requests": feedback}})
+    return jsonify({"ok": True, "readiness": training_readiness_summary(), "counts": counts, "source_rows": {"analyst_observations": observations, "scam_reports": reports, "feedback_requests": feedback}})
 
 
 @app.route("/admin/api/training/export-jsonl")
@@ -4054,21 +4209,41 @@ def admin_export_training_jsonl():
     admin_check = require_admin()
     if admin_check:
         return admin_check
+    status = (request.args.get("status") or "approved").lower().strip()
+    allowed = {"approved", "gold", "candidate", "all"}
+    if status not in allowed:
+        status = "approved"
+    if status == "approved":
+        where = "WHERE status IN ('approved','gold') OR gold = TRUE"
+    elif status == "gold":
+        where = "WHERE status = 'gold' OR gold = TRUE"
+    elif status == "candidate":
+        where = "WHERE status = 'candidate'"
+    else:
+        where = "WHERE status <> 'rejected'"
     rows = []
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT * FROM training_examples
-                WHERE status IN ('candidate','approved')
-                ORDER BY id ASC
-                LIMIT 5000
-                """
-            )
+            cur.execute(f"SELECT * FROM training_examples {where} ORDER BY id ASC LIMIT 10000")
             rows = cur.fetchall()
-            cur.execute("INSERT INTO training_exports (export_type, example_count, notes) VALUES ('sft_jsonl', %s, %s)", (len(rows), "Admin JSONL export for future Lida fine-tuning"))
+            cur.execute("INSERT INTO training_exports (export_type, example_count, notes) VALUES ('sft_jsonl', %s, %s)", (len(rows), f"Admin JSONL export status={status} for future Lida fine-tuning"))
     body = "\n".join(json.dumps(sft_jsonl_record(r), ensure_ascii=False) for r in rows) + ("\n" if rows else "")
-    return Response(body, mimetype="application/jsonl", headers={"Content-Disposition": "attachment; filename=lida_training_sft.jsonl"})
+    filename = f"lida_training_{status}_sft.jsonl"
+    return Response(body, mimetype="application/jsonl", headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+@app.route("/admin/api/training/eval-jsonl")
+def admin_export_eval_jsonl():
+    admin_check = require_admin()
+    if admin_check:
+        return admin_check
+    rows = []
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM lida_eval_cases ORDER BY id ASC LIMIT 5000")
+            rows = cur.fetchall()
+    body = "\n".join(json.dumps(eval_jsonl_record(r), ensure_ascii=False) for r in rows) + ("\n" if rows else "")
+    return Response(body, mimetype="application/jsonl", headers={"Content-Disposition": "attachment; filename=lida_eval_cases.jsonl"})
 
 
 # ============================================================
