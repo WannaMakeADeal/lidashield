@@ -953,6 +953,34 @@ def ensure_db():
         analyst_summary TEXT,
         created_at TIMESTAMP DEFAULT NOW()
     );
+    
+
+    CREATE TABLE IF NOT EXISTS training_examples (
+        id SERIAL PRIMARY KEY,
+        source_type TEXT NOT NULL,
+        source_id INT,
+        input_type TEXT DEFAULT 'message',
+        input_text TEXT NOT NULL,
+        label_verdict TEXT DEFAULT 'unknown',
+        label_score INT DEFAULT 0,
+        label_category TEXT DEFAULT 'general',
+        extracted_indicators TEXT,
+        evidence_json TEXT,
+        target_json TEXT,
+        split TEXT DEFAULT 'train',
+        status TEXT DEFAULT 'candidate',
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(source_type, source_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS training_exports (
+        id SERIAL PRIMARY KEY,
+        export_type TEXT DEFAULT 'sft_jsonl',
+        example_count INT DEFAULT 0,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
     """
 
     with get_db() as conn:
@@ -979,6 +1007,9 @@ def ensure_db():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_requests_type ON feedback_requests(request_type)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_analyst_observations_user ON analyst_observations(user_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_analyst_observations_verdict ON analyst_observations(verdict)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_training_examples_status ON training_examples(status)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_training_examples_label ON training_examples(label_verdict)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_training_examples_source ON training_examples(source_type, source_id)")
 
     _db_ready = True
 
@@ -3747,6 +3778,297 @@ def admin_feedback_page():
 <style>body{{margin:0;background:#050816;color:#f8fafc;font-family:Inter,system-ui;padding:28px}}.wrap{{max-width:1100px;margin:auto}}a{{color:#facc15}}.top{{display:flex;justify-content:space-between;gap:16px;align-items:center}}.card,.item{{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);border-radius:22px;padding:20px;margin:14px 0}}h1{{font-family:Georgia,serif;font-size:42px}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}}.stat{{border:1px solid rgba(250,204,21,.18);border-radius:18px;padding:16px}}.stat b{{display:block;font-size:32px}}.stat span,.muted{{color:#9fb0ca}}.err{{border:1px solid #fb7185;color:#fecdd3;padding:14px;border-radius:18px}}</style></head>
 <body><div class='wrap'><div class='top'><h1>LidaShield Feedback</h1><div><a href='/dashboard'>Dashboard</a> · <a href='/admin/reports'>Intelligence</a></div></div><div class='card'><h2>Feedback counts</h2><div class='grid'>{count_html}</div></div><div class='card'><h2>Latest feedback</h2>{item_html or '<p>No feedback yet.</p>'}</div></div></body></html>
 """
+
+
+
+# ============================================================
+# Lida training data factory
+# ============================================================
+
+def build_training_target(verdict, score, category, summary, evidence, indicators):
+    """Create a clean supervised-fine-tuning target for future Lida model training."""
+    return {
+        "verdict": verdict or "unknown",
+        "score": int(score or 0),
+        "category": category or "general",
+        "summary": summary or "No summary available.",
+        "evidence": evidence if isinstance(evidence, list) else [],
+        "indicators": indicators if isinstance(indicators, dict) else {},
+        "action": "Do not enter passwords, OTPs, card details, or payments unless independently verified."
+    }
+
+
+def sft_jsonl_record(example):
+    indicators = safe_json_loads(example.get("extracted_indicators"), {})
+    evidence = safe_json_loads(example.get("evidence_json"), [])
+    target = safe_json_loads(example.get("target_json"), {})
+    system = (
+        "You are Lida, LidaShield's scam-intelligence AI analyst. "
+        "Analyze WhatsApp, SMS, email, URL, and scam evidence. "
+        "Use database evidence first, confidence second, and wording signals only as supporting evidence. "
+        "Never claim a link is safe just because it is unknown."
+    )
+    user_prompt = {
+        "input_type": example.get("input_type") or "message",
+        "input_text": example.get("input_text") or "",
+        "extracted_indicators": indicators,
+        "available_evidence": evidence,
+    }
+    assistant_target = {
+        "verdict": target.get("verdict") or example.get("label_verdict") or "unknown",
+        "score": int(target.get("score") or example.get("label_score") or 0),
+        "category": target.get("category") or example.get("label_category") or "general",
+        "summary": target.get("summary") or "Evidence-backed LidaShield analysis.",
+        "evidence": target.get("evidence") or evidence,
+        "recommended_action": target.get("action") or "Treat risky links with caution and verify through official channels."
+    }
+    return {
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(user_prompt, ensure_ascii=False)},
+            {"role": "assistant", "content": json.dumps(assistant_target, ensure_ascii=False)}
+        ]
+    }
+
+
+def upsert_training_example(cur, source_type, source_id, input_type, input_text, label_verdict, label_score, label_category, indicators=None, evidence=None, summary=None, status="candidate"):
+    indicators = indicators if isinstance(indicators, dict) else safe_json_loads(indicators, {})
+    evidence = evidence if isinstance(evidence, list) else safe_json_loads(evidence, [])
+    target = build_training_target(label_verdict, label_score, label_category, summary, evidence, indicators)
+    cur.execute(
+        """
+        INSERT INTO training_examples
+        (source_type, source_id, input_type, input_text, label_verdict, label_score, label_category,
+         extracted_indicators, evidence_json, target_json, status, updated_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+        ON CONFLICT (source_type, source_id) DO UPDATE SET
+            input_text = EXCLUDED.input_text,
+            label_verdict = EXCLUDED.label_verdict,
+            label_score = EXCLUDED.label_score,
+            label_category = EXCLUDED.label_category,
+            extracted_indicators = EXCLUDED.extracted_indicators,
+            evidence_json = EXCLUDED.evidence_json,
+            target_json = EXCLUDED.target_json,
+            status = EXCLUDED.status,
+            updated_at = NOW()
+        """,
+        (
+            source_type, source_id, input_type, input_text, label_verdict, int(label_score or 0), label_category,
+            json.dumps(indicators), json.dumps(evidence), json.dumps(target), status
+        )
+    )
+
+
+def rebuild_training_candidates(limit=500):
+    """Convert observations, reports, and feedback into trainable candidate rows."""
+    added = 0
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, input_type, input_text, verdict, score, extracted_indicators, evidence_json, analyst_summary
+                FROM analyst_observations
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (limit,)
+            )
+            for row in cur.fetchall():
+                input_text = (row.get("input_text") or "").strip()
+                if not input_text:
+                    continue
+                score = int(row.get("score") or 0)
+                verdict = row.get("verdict") or "unknown"
+                category = "verified_or_high_risk" if score >= 65 else "unknown_or_low_signal"
+                upsert_training_example(
+                    cur,
+                    "analyst_observation",
+                    row.get("id"),
+                    row.get("input_type") or "message",
+                    input_text,
+                    verdict,
+                    score,
+                    category,
+                    row.get("extracted_indicators"),
+                    row.get("evidence_json"),
+                    row.get("analyst_summary"),
+                    "candidate"
+                )
+                added += 1
+
+            cur.execute(
+                """
+                SELECT id, url, message, category, triage_score, triage_status, triage_reasons
+                FROM scam_reports
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (limit,)
+            )
+            for row in cur.fetchall():
+                url = (row.get("url") or "").strip()
+                msg = (row.get("message") or "").strip()
+                input_text = msg or url
+                if not input_text:
+                    continue
+                score = int(row.get("triage_score") or 0)
+                status = row.get("triage_status") or "watchlist"
+                verdict = "suspicious" if score >= 65 else "unknown"
+                evidence = []
+                reasons = safe_json_loads(row.get("triage_reasons"), [])
+                for reason in reasons:
+                    evidence.append({"type":"triage_signal", "confidence":score, "detail":str(reason)})
+                indicators = {"urls": [url] if url else [], "domains": [domain_from_url(url)] if url else [], "phones": [], "emails": []}
+                upsert_training_example(
+                    cur,
+                    "scam_report",
+                    row.get("id"),
+                    row.get("category") or "url",
+                    input_text,
+                    verdict,
+                    score,
+                    status,
+                    indicators,
+                    evidence,
+                    "Community report converted into Lida training candidate.",
+                    "candidate"
+                )
+                added += 1
+
+            cur.execute(
+                """
+                SELECT id, request_type, email, subject, url, message
+                FROM feedback_requests
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (limit,)
+            )
+            for row in cur.fetchall():
+                msg = (row.get("message") or "").strip()
+                if not msg:
+                    continue
+                request_type = row.get("request_type") or "feedback"
+                url = row.get("url") or ""
+                input_text = f"Feedback type: {request_type}\nURL: {url}\nSubject: {row.get('subject') or ''}\nMessage: {msg}".strip()
+                verdict = "needs_human_review" if request_type in ("wrong_flag", "missed_scam", "bug") else "feedback"
+                indicators = {"urls": [url] if url else [], "domains": [domain_from_url(url)] if url else [], "phones": [], "emails": []}
+                evidence = [{"type":"user_feedback", "confidence":30, "detail":f"User submitted {request_type} feedback."}]
+                upsert_training_example(
+                    cur,
+                    "feedback_request",
+                    row.get("id"),
+                    "feedback",
+                    input_text,
+                    verdict,
+                    30,
+                    request_type,
+                    indicators,
+                    evidence,
+                    "Feedback should be used for human review and future model correction.",
+                    "candidate"
+                )
+                added += 1
+    return added
+
+
+@app.route("/admin/training-data")
+def admin_training_data_page():
+    admin_check = require_admin()
+    if admin_check:
+        return admin_check
+
+    counts = []
+    latest = []
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status, label_verdict, COUNT(*) AS count FROM training_examples GROUP BY status, label_verdict ORDER BY count DESC")
+            counts = cur.fetchall()
+            cur.execute(
+                """
+                SELECT id, source_type, source_id, input_type, label_verdict, label_score, label_category, input_text, created_at
+                FROM training_examples
+                ORDER BY id DESC
+                LIMIT 40
+                """
+            )
+            latest = cur.fetchall()
+
+    def e2(x):
+        return html.escape(str(x if x is not None else ""))
+
+    count_html = "".join(
+        f"<div class='stat'><b>{e2(c.get('count'))}</b><span>{e2(c.get('status'))} / {e2(c.get('label_verdict'))}</span></div>"
+        for c in counts
+    ) or "<p>No training examples yet. Click Build training candidates.</p>"
+
+    latest_html = "".join(
+        f"<div class='item'><div><b>#{e2(r.get('id'))} · {e2(r.get('label_verdict'))} · {e2(r.get('label_score'))}/100</b></div>"
+        f"<div class='muted'>{e2(r.get('source_type'))} #{e2(r.get('source_id'))} · {e2(r.get('input_type'))} · {e2(r.get('label_category'))} · {e2(r.get('created_at'))}</div>"
+        f"<pre>{e2((r.get('input_text') or '')[:700])}</pre></div>"
+        for r in latest
+    ) or "<p>No training candidates yet.</p>"
+
+    return f"""
+<!doctype html><html><head><title>Lida Training Data</title><meta name='viewport' content='width=device-width,initial-scale=1'>
+<style>
+body{{margin:0;background:#070912;color:#f8f4ec;font-family:Inter,Arial,sans-serif;font-size:18px}}.wrap{{max-width:1720px;margin:0 auto;padding:56px 64px}}h1{{font-size:58px;margin:0 0 12px}}h2{{font-size:34px}}.top{{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}}a,.gold{{color:#ffd34d}}.btn{{display:inline-block;border:1px solid #3a3f50;border-radius:22px;padding:18px 26px;text-decoration:none;color:#fff;background:#151a28;font-weight:900;margin-left:10px}}.goldbtn{{background:#f8b633;color:#070912;border-color:#f8b633}}.card{{background:#101625;border:1px solid #283248;border-radius:28px;padding:34px;margin:28px 0}}.note{{background:#211b10;border:1px solid #8a650e;border-radius:24px;padding:24px;margin:28px 0;color:#ffe895}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}}.stat,.item{{background:#1a2130;border:1px solid #30394c;border-radius:22px;padding:22px;margin:16px 0}}.stat b{{display:block;font-size:44px}}.stat span,.muted{{color:#aecaef}}pre{{white-space:pre-wrap;font-family:ui-monospace,monospace;background:#0b0f19;border:1px solid #2b3346;border-radius:16px;padding:16px;color:#e8f0ff}}
+</style></head><body><div class='wrap'><div class='top'><div><h1>Lida Training Data Factory</h1><div class='muted'>This is the bridge from LidaShield's database to the future Lida open-source model. Database memory first. Model training second.</div></div><div><a class='btn' href='/dashboard'>Dashboard</a><a class='btn' href='/admin/reports'>Intelligence</a><a class='btn' href='/admin/feedback'>Feedback</a></div></div>
+<div class='note'><b>Rule:</b> Lida learns from labelled evidence. We do not train on random guesses. Analyst observations, scam reports, and user feedback become candidate examples first.</div>
+<div class='card'><h2>Actions</h2><form method='post' action='/admin/api/training/build' style='display:inline'><button class='btn goldbtn' type='submit'>Build training candidates</button></form><a class='btn' href='/admin/api/training/export-jsonl'>Download SFT JSONL</a><a class='btn' href='/admin/api/training/summary'>Training summary JSON</a></div>
+<div class='card'><h2>Training counts</h2><div class='grid'>{count_html}</div></div>
+<div class='card'><h2>Latest training candidates</h2>{latest_html}</div>
+</div></body></html>
+"""
+
+
+@app.route("/admin/api/training/build", methods=["POST"])
+def admin_build_training_data():
+    admin_check = require_admin()
+    if admin_check:
+        return admin_check
+    rebuild_training_candidates(limit=1000)
+    return redirect("/admin/training-data")
+
+
+@app.route("/admin/api/training/summary")
+def admin_training_summary():
+    admin_check = require_admin()
+    if admin_check:
+        return admin_check
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status, label_verdict, COUNT(*) AS count FROM training_examples GROUP BY status, label_verdict ORDER BY count DESC")
+            counts = cur.fetchall()
+            cur.execute("SELECT COUNT(*) AS count FROM analyst_observations")
+            observations = cur.fetchone().get("count")
+            cur.execute("SELECT COUNT(*) AS count FROM scam_reports")
+            reports = cur.fetchone().get("count")
+            cur.execute("SELECT COUNT(*) AS count FROM feedback_requests")
+            feedback = cur.fetchone().get("count")
+    return jsonify({"ok": True, "counts": counts, "source_rows": {"analyst_observations": observations, "scam_reports": reports, "feedback_requests": feedback}})
+
+
+@app.route("/admin/api/training/export-jsonl")
+def admin_export_training_jsonl():
+    admin_check = require_admin()
+    if admin_check:
+        return admin_check
+    rows = []
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM training_examples
+                WHERE status IN ('candidate','approved')
+                ORDER BY id ASC
+                LIMIT 5000
+                """
+            )
+            rows = cur.fetchall()
+            cur.execute("INSERT INTO training_exports (export_type, example_count, notes) VALUES ('sft_jsonl', %s, %s)", (len(rows), "Admin JSONL export for future Lida fine-tuning"))
+    body = "\n".join(json.dumps(sft_jsonl_record(r), ensure_ascii=False) for r in rows) + ("\n" if rows else "")
+    return Response(body, mimetype="application/jsonl", headers={"Content-Disposition": "attachment; filename=lida_training_sft.jsonl"})
 
 
 # ============================================================
