@@ -3,132 +3,2266 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LidaShield — AI Scam Analyst</title>
+<title>LidaShield — Scam Link Protection</title>
 <link rel="icon" type="image/png" href="/static/lidashield-icon.png">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&family=DM+Mono:wght@300;400;500&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
 <style>
 :root{
-  --bg:#03030a;--panel:rgba(255,255,255,.055);--panel2:rgba(255,255,255,.085);
-  --gold:#f0a830;--gold2:#ffd27a;--text:#f4efe6;--muted:#8c8376;
-  --border:rgba(240,168,48,.20);--red:#ff5c68;--green:#54d483;--blue:#78a6ff;--orange:#f0a830;
+  --bg:#03030a;
+  --bg2:#070711;
+  --card:rgba(255,255,255,.045);
+  --card2:rgba(255,255,255,.075);
+  --gold:#f0a830;
+  --gold2:#ffd27a;
+  --gold3:rgba(240,168,48,.22);
+  --text:#f4efe6;
+  --muted:#8c8376;
+  --muted2:#5c554d;
+  --border:rgba(240,168,48,.18);
+  --red:#ff5c68;
+  --green:#54d483;
+  --orange:#f0a830;
+  --blue:#78a6ff;
+  --shadow:0 30px 80px rgba(0,0,0,.45);
+  --transition:cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-*{box-sizing:border-box;margin:0;padding:0}
-html{scroll-behavior:smooth}
-body{min-height:100vh;background:radial-gradient(circle at 15% 10%,rgba(240,168,48,.10),transparent 25%),radial-gradient(circle at 80% 0,rgba(255,255,255,.055),transparent 22%),radial-gradient(circle at 50% 100%,rgba(240,168,48,.08),transparent 30%),var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif;overflow-x:hidden}
-body:before{content:"";position:fixed;inset:0;background-image:linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);background-size:42px 42px;pointer-events:none;z-index:0}.page{position:relative;z-index:1}.nav{position:fixed;top:0;left:0;right:0;height:76px;display:flex;justify-content:space-between;align-items:center;padding:0 42px;background:rgba(3,3,10,.74);border-bottom:1px solid var(--border);backdrop-filter:blur(22px);z-index:20}.brand{display:flex;align-items:center;gap:14px;text-decoration:none;color:var(--text)}.logo-mark{width:42px;height:42px;border:1px solid rgba(240,168,48,.28);border-radius:14px;background:linear-gradient(135deg,rgba(240,168,48,.25),rgba(255,255,255,.02));position:relative;box-shadow:0 0 30px rgba(240,168,48,.12)}.logo-mark:after{content:"L";position:absolute;left:12px;top:3px;font-family:Cormorant Garamond,serif;font-size:34px;color:var(--gold2)}.brand-name{font-family:Cormorant Garamond,serif;font-size:26px;color:var(--gold2);letter-spacing:.04em}.brand-sub{font-family:DM Mono,monospace;font-size:10px;color:var(--muted);letter-spacing:.18em;text-transform:uppercase}.nav-right{display:flex;gap:10px;align-items:center}.user-pill{display:none;border:1px solid var(--border);border-radius:999px;padding:8px 12px;color:var(--muted);font-family:DM Mono,monospace;font-size:11px}.user-pill.show{display:inline-flex}.btn{border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);padding:11px 15px;border-radius:12px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;text-decoration:none;cursor:pointer;font-weight:700;display:inline-flex;justify-content:center;align-items:center;gap:8px;transition:.2s}.btn:hover:not(:disabled){background:rgba(240,168,48,.12);transform:translateY(-1px)}.btn.gold{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#080805;border-color:var(--gold)}.btn.hide{display:none}.hero{padding:128px 22px 70px;text-align:center;display:flex;flex-direction:column;align-items:center}.kicker{font-family:DM Mono,monospace;color:var(--gold);letter-spacing:.22em;text-transform:uppercase;font-size:11px;margin-bottom:22px}h1{font-family:Cormorant Garamond,serif;font-size:clamp(52px,8vw,110px);line-height:.9;font-weight:400;letter-spacing:-.04em;max-width:1000px}h1 em{color:var(--gold);font-style:italic}.hero-copy{max-width:720px;margin-top:24px;color:var(--muted);line-height:1.8;font-size:14px}.shell{width:min(1000px,calc(100% - 28px));margin:28px auto;border:1px solid var(--border);border-radius:30px;background:linear-gradient(180deg,rgba(255,255,255,.075),rgba(255,255,255,.025));box-shadow:0 30px 80px rgba(0,0,0,.40);overflow:hidden}.panel{padding:34px}.panel + .panel{border-top:1px solid rgba(255,255,255,.08)}.panel-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;margin-bottom:20px}.panel-title{font-family:Cormorant Garamond,serif;font-size:32px;font-weight:500}.panel-small{color:var(--muted);line-height:1.7;font-size:13px;margin-top:8px}.chip{font-family:DM Mono,monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;border:1px solid rgba(84,212,131,.35);color:var(--green);background:rgba(84,212,131,.08);border-radius:999px;padding:8px 11px;white-space:nowrap}.input-row{display:flex;gap:12px}.input,.textarea,select{width:100%;border:1.5px solid rgba(240,168,48,.23);border-radius:16px;background:rgba(255,255,255,.055);color:var(--text);padding:15px 17px;outline:none;font:inherit}.textarea{min-height:135px;resize:vertical;line-height:1.6}.input:focus,.textarea:focus,select:focus{border-color:rgba(240,168,48,.65);box-shadow:0 0 0 4px rgba(240,168,48,.10)}select option{background:#08080f;color:#fff}.primary-btn{border:0;border-radius:16px;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#080805;padding:0 24px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;min-width:150px}.primary-btn:disabled,.btn:disabled{opacity:.55;cursor:not-allowed}.result{display:none;margin-top:20px;border:1px solid rgba(255,255,255,.09);background:rgba(0,0,0,.22);border-radius:22px;padding:20px}.result.show{display:block}.result-top{display:flex;justify-content:space-between;gap:15px;align-items:center}.verdict{font-family:Cormorant Garamond,serif;font-size:42px;text-transform:capitalize}.score{font-family:DM Mono,monospace;color:var(--gold2)}.dangerous{color:var(--red)}.suspicious{color:var(--orange)}.safe,.low-risk{color:var(--green)}.unknown{color:var(--blue)}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}.metric{border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:14px;background:rgba(255,255,255,.035)}.metric b{display:block;font-size:22px}.metric span{font-family:DM Mono,monospace;color:var(--muted);font-size:10px;letter-spacing:.12em;text-transform:uppercase}.list{margin-top:16px;display:grid;gap:8px}.li{padding:11px 12px;border-radius:12px;background:rgba(255,255,255,.04);color:#d8d0c7;font-size:13px;line-height:1.55;overflow-wrap:anywhere}.evidence{border-left:3px solid var(--gold);padding-left:12px}.section{width:min(1100px,calc(100% - 28px));margin:70px auto}.section h2{font-family:Cormorant Garamond,serif;font-size:52px;font-weight:400;margin-bottom:16px}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.card{border:1px solid rgba(240,168,48,.16);border-radius:24px;padding:24px;background:rgba(255,255,255,.045)}.card h3{font-size:18px;margin-bottom:10px}.card p{color:var(--muted);line-height:1.75;font-size:13px}.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.price{font-family:Cormorant Garamond,serif;font-size:46px;margin:15px 0}.footer{padding:40px 22px 70px;text-align:center;color:var(--muted);font-size:12px}.footer a{color:var(--gold2);text-decoration:none}.toast{position:fixed;right:18px;bottom:18px;z-index:99;padding:14px 16px;border-radius:14px;background:#11111b;border:1px solid var(--border);box-shadow:0 12px 40px rgba(0,0,0,.4);display:none;max-width:min(420px,calc(100% - 36px));line-height:1.5}.toast.show{display:block}@media(max-width:850px){.nav{padding:0 16px}.brand-sub,.user-pill{display:none!important}.input-row{flex-direction:column}.primary-btn{height:52px}.grid,.cards,.plans{grid-template-columns:1fr}.panel-head{flex-direction:column}.shell{width:calc(100% - 18px)}.panel{padding:24px}h1{font-size:56px}.nav-right{gap:6px}.btn{padding:9px 10px}}
+
+*{
+  box-sizing:border-box;
+  margin:0;
+  padding:0;
+}
+
+html{
+  scroll-behavior:smooth;
+}
+
+body{
+  min-height:100vh;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(240,168,48,.08), transparent 26%),
+    radial-gradient(circle at 80% 10%, rgba(255,255,255,.05), transparent 20%),
+    radial-gradient(circle at 50% 100%, rgba(240,168,48,.08), transparent 30%),
+    var(--bg);
+  color:var(--text);
+  font-family:Inter, system-ui, sans-serif;
+  overflow-x:hidden;
+}
+
+body::before{
+  content:"";
+  position:fixed;
+  inset:0;
+  background-image:
+    linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
+  background-size:42px 42px;
+  mask-image:linear-gradient(to bottom, black, transparent 85%);
+  pointer-events:none;
+  z-index:0;
+}
+
+body::after{
+  content:"";
+  position:fixed;
+  inset:0;
+  background:
+    radial-gradient(circle, rgba(255,208,122,.09) 1px, transparent 1px);
+  background-size:120px 120px;
+  opacity:.42;
+  pointer-events:none;
+  z-index:0;
+}
+
+/* 3D Starfield */
+.starfield-3d{
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  z-index:0;
+  perspective:1000px;
+  overflow:hidden;
+}
+
+.stars-container{
+  width:100%;
+  height:100%;
+  transform-style:preserve-3d;
+  position:relative;
+  will-change:transform;
+}
+
+.star-3d{
+  position:absolute;
+  width:2px;
+  height:2px;
+  background:var(--gold);
+  border-radius:50%;
+  box-shadow:0 0 4px rgba(240,168,48,.9);
+  transform-style:preserve-3d;
+}
+
+.page{
+  position:relative;
+  z-index:1;
+}
+
+/* Navbar */
+
+.nav{
+  position:fixed;
+  top:0;
+  left:0;
+  right:0;
+  height:76px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 42px;
+  background:rgba(3,3,10,.72);
+  backdrop-filter:blur(22px);
+  border-bottom:1px solid var(--border);
+  z-index:50;
+}
+
+.brand{
+  display:flex;
+  align-items:center;
+  gap:14px;
+  text-decoration:none;
+  color:var(--text);
+  transition:transform .3s ease;
+}
+
+.brand:hover{
+  transform:translateY(-1px);
+}
+
+.logo-mark{
+  width:42px;
+  height:42px;
+  position:relative;
+  border:1px solid var(--gold3);
+  border-radius:14px;
+  background:
+    linear-gradient(135deg, rgba(240,168,48,.22), rgba(255,255,255,.02));
+  box-shadow:0 0 30px rgba(240,168,48,.12);
+  overflow:hidden;
+}
+
+.logo-mark::before{
+  content:"";
+  position:absolute;
+  width:16px;
+  height:16px;
+  top:6px;
+  left:7px;
+  border-radius:50%;
+  background:var(--gold2);
+  box-shadow:0 0 20px rgba(240,168,48,.75);
+}
+
+.logo-mark::after{
+  content:"L";
+  position:absolute;
+  left:12px;
+  top:7px;
+  font-family:Cormorant Garamond, serif;
+  font-size:31px;
+  font-weight:500;
+  color:var(--gold);
+}
+
+.brand-text{
+  display:flex;
+  flex-direction:column;
+  line-height:1.1;
+}
+
+.brand-name{
+  font-family:Cormorant Garamond, serif;
+  font-size:25px;
+  letter-spacing:.04em;
+  color:var(--gold2);
+  font-weight:500;
+}
+
+.brand-sub{
+  font-family:DM Mono, monospace;
+  font-size:10px;
+  letter-spacing:.18em;
+  color:var(--muted);
+  text-transform:uppercase;
+}
+
+.nav-right{
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+
+.nav-right.auth-loading #loginBtn,
+.nav-right.auth-loading #logoutBtn,
+.nav-right.auth-loading #userPill{
+  visibility:hidden;
+}
+
+.user-pill{
+  display:none;
+  align-items:center;
+  gap:10px;
+  padding:9px 12px;
+  border:1px solid var(--border);
+  background:rgba(255,255,255,.035);
+  border-radius:999px;
+  color:var(--muted);
+  font-family:DM Mono, monospace;
+  font-size:11px;
+  transition:all .3s ease;
+}
+
+.user-pill:hover{
+  background:rgba(255,255,255,.06);
+  border-color:rgba(240,168,48,.35);
+}
+
+.user-pill.show{
+  display:flex;
+}
+
+.avatar{
+  width:22px;
+  height:22px;
+  border-radius:50%;
+  background:var(--gold);
+}
+
+.plan-badge{
+  padding:5px 9px;
+  border-radius:999px;
+  border:1px solid var(--gold3);
+  color:var(--gold2);
+  background:rgba(240,168,48,.08);
+  text-transform:uppercase;
+  font-size:10px;
+  letter-spacing:.12em;
+  font-weight:600;
+}
+
+.btn{
+  border:1px solid var(--border);
+  background:rgba(255,255,255,.04);
+  color:var(--text);
+  padding:11px 15px;
+  border-radius:12px;
+  font-family:Inter, system-ui, sans-serif;
+  font-size:11px;
+  letter-spacing:.1em;
+  text-transform:uppercase;
+  cursor:pointer;
+  transition:.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  text-decoration:none;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  font-weight:600;
+}
+
+.btn:hover:not(:disabled){
+  border-color:rgba(240,168,48,.45);
+  background:rgba(240,168,48,.12);
+  transform:translateY(-2px);
+  box-shadow:0 8px 24px rgba(240,168,48,.15);
+}
+
+.btn:active:not(:disabled){
+  transform:translateY(0);
+}
+
+.btn.gold{
+  background:linear-gradient(135deg, var(--gold), var(--gold2));
+  color:#080805;
+  border-color:var(--gold);
+  font-weight:700;
+}
+
+.btn.gold:hover:not(:disabled){
+  transform:translateY(-2px);
+  box-shadow:0 12px 32px rgba(240,168,48,.25);
+  background:linear-gradient(135deg, var(--gold2), #ffdc94);
+}
+
+.btn.ghost{
+  color:var(--muted);
+}
+
+.btn.hide{
+  display:none;
+}
+
+.btn:disabled{
+  opacity:.5;
+  cursor:not-allowed;
+}
+
+/* Hero */
+
+.hero{
+  min-height:auto;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  padding:128px 22px 76px;
+  text-align:center;
+  animation:fadeInHero .6s ease-out;
+}
+
+@keyframes fadeInHero{
+  from{
+    opacity:0;
+    transform:translateY(20px);
+  }
+  to{
+    opacity:1;
+    transform:translateY(0);
+  }
+}
+
+.kicker{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:14px;
+  color:var(--gold);
+  font-family:DM Mono, monospace;
+  font-size:11px;
+  letter-spacing:.24em;
+  text-transform:uppercase;
+  margin-bottom:24px;
+  font-weight:600;
+  animation:fadeInHero .6s ease-out .1s both;
+}
+
+.kicker::before,
+.kicker::after{
+  content:"";
+  width:54px;
+  height:1px;
+  background:linear-gradient(90deg, transparent, var(--gold));
+}
+
+.kicker::after{
+  background:linear-gradient(90deg, var(--gold), transparent);
+}
+
+h1{
+  font-family:Cormorant Garamond, serif;
+  font-size:clamp(54px, 8.5vw, 112px);
+  line-height:.88;
+  font-weight:400;
+  letter-spacing:-.04em;
+  max-width:980px;
+  animation:fadeInHero .6s ease-out .2s both;
+}
+
+h1 em{
+  color:var(--gold);
+  font-style:italic;
+  font-weight:500;
+}
+
+.hero-copy{
+  margin-top:24px;
+  max-width:650px;
+  color:var(--muted);
+  line-height:1.8;
+  font-family:Inter, system-ui, sans-serif;
+  font-size:14px;
+  animation:fadeInHero .6s ease-out .3s both;
+  font-weight:400;
+}
+
+.scanner-shell{
+  width:min(920px, 100%);
+  scroll-margin-top:96px;
+  margin-top:54px;
+  padding:2px;
+  border-radius:30px;
+  background:
+    linear-gradient(135deg, rgba(240,168,48,.45), rgba(255,255,255,.08), rgba(240,168,48,.18));
+  box-shadow:var(--shadow);
+  animation:fadeInHero .6s ease-out .4s both;
+}
+
+.scanner{
+  border-radius:29px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.025)),
+    rgba(6,6,14,.93);
+  border:1px solid rgba(255,255,255,.08);
+  padding:42px;
+  text-align:left;
+  overflow:hidden;
+  position:relative;
+}
+
+.scanner::before{
+  content:"";
+  position:absolute;
+  width:320px;
+  height:320px;
+  right:-150px;
+  top:-160px;
+  border-radius:50%;
+  background:rgba(240,168,48,.09);
+  filter:blur(10px);
+}
+
+.scanner-top{
+  position:relative;
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:20px;
+  margin-bottom:28px;
+}
+
+.scanner-title{
+  font-family:Cormorant Garamond, serif;
+  font-size:28px;
+  color:var(--text);
+  font-weight:500;
+}
+
+.scanner-small{
+  color:var(--muted);
+  margin-top:8px;
+  font-family:Inter, system-ui, sans-serif;
+  font-size:13px;
+  font-weight:400;
+}
+
+.status-chip{
+  color:var(--green);
+  border:1px solid rgba(84,212,131,.35);
+  background:rgba(84,212,131,.1);
+  padding:9px 12px;
+  border-radius:999px;
+  font-family:Inter, system-ui, sans-serif;
+  font-size:11px;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  white-space:nowrap;
+  font-weight:600;
+}
+
+.input-row{
+  position:relative;
+  display:flex;
+  gap:14px;
+}
+
+.url-input{
+  flex:1;
+  min-width:0;
+  padding:16px 22px;
+  border-radius:18px;
+  border:1.5px solid rgba(240,168,48,.22);
+  background:rgba(255,255,255,.05);
+  color:var(--text);
+  outline:none;
+  font-size:15px;
+  font-family:Inter, system-ui, sans-serif;
+  transition:all .3s ease;
+  font-weight:400;
+}
+
+.url-input::placeholder{
+  color:var(--muted2);
+}
+
+.url-input:focus{
+  border-color:rgba(240,168,48,.65);
+  background:rgba(255,255,255,.08);
+  box-shadow:0 0 0 4px rgba(240,168,48,.1);
+}
+
+.scan-btn{
+  width:164px;
+  border-radius:18px;
+  border:0;
+  background:linear-gradient(135deg, var(--gold), var(--gold2));
+  color:#080805;
+  font-family:Inter, system-ui, sans-serif;
+  font-weight:700;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  cursor:pointer;
+  transition:all .3s var(--transition);
+  font-size:12px;
+}
+
+.scan-btn:hover:not(:disabled){
+  transform:translateY(-3px);
+  box-shadow:0 20px 48px rgba(240,168,48,.25);
+}
+
+.scan-btn:active:not(:disabled){
+  transform:translateY(-1px);
+}
+
+.scan-btn:disabled{
+  opacity:.7;
+  cursor:not-allowed;
+  transform:none;
+}
+
+.loading{
+  display:none;
+  margin-top:28px;
+  align-items:center;
+  gap:12px;
+  color:var(--muted);
+  font-family:Inter, system-ui, sans-serif;
+  font-size:13px;
+  animation:fadeIn .4s ease;
+}
+
+.loading.show{
+  display:flex;
+}
+
+@keyframes fadeIn{
+  from{opacity:0}
+  to{opacity:1}
+}
+
+.spinner{
+  width:18px;
+  height:18px;
+  border-radius:50%;
+  border:2px solid rgba(240,168,48,.18);
+  border-top-color:var(--gold);
+  animation:spin .8s linear infinite;
+}
+
+@keyframes spin{
+  to{transform:rotate(360deg)}
+}
+
+.error{
+  display:none;
+  margin-top:22px;
+  padding:16px 18px;
+  border:1px solid rgba(255,92,104,.35);
+  background:rgba(255,92,104,.1);
+  color:#ff9ca4;
+  border-radius:16px;
+  font-family:Inter, system-ui, sans-serif;
+  font-size:13px;
+  line-height:1.6;
+  animation:slideDown .3s ease;
+}
+
+.error.show{
+  display:block;
+}
+
+@keyframes slideDown{
+  from{
+    opacity:0;
+    transform:translateY(-10px);
+  }
+  to{
+    opacity:1;
+    transform:translateY(0);
+  }
+}
+
+/* Result */
+
+.result{
+  display:none;
+  margin-top:32px;
+  padding-top:32px;
+  border-top:1px solid rgba(240,168,48,.12);
+  animation:slideDown .4s ease;
+}
+
+.result.show{
+  display:block;
+}
+
+.verdict-line{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:20px;
+  flex-wrap:wrap;
+  margin-bottom:24px;
+}
+
+.verdict-left{
+  display:flex;
+  align-items:center;
+  gap:18px;
+}
+
+.verdict-orb{
+  width:18px;
+  height:18px;
+  border-radius:50%;
+  background:var(--muted);
+  box-shadow:0 0 24px rgba(255,255,255,.12);
+  animation:pulse-orb .6s ease;
+}
+
+@keyframes pulse-orb{
+  0%{
+    transform:scale(0.8);
+    opacity:0;
+  }
+  100%{
+    transform:scale(1);
+    opacity:1;
+  }
+}
+
+.verdict-orb.safe{
+  background:var(--green);
+  box-shadow:0 0 30px rgba(84,212,131,.45);
+}
+
+.verdict-orb.suspicious{
+  background:var(--orange);
+  box-shadow:0 0 30px rgba(240,168,48,.45);
+}
+
+.verdict-orb.dangerous{
+  background:var(--red);
+  box-shadow:0 0 30px rgba(255,92,104,.45);
+}
+
+.verdict-orb.unknown{
+  background:var(--blue);
+  box-shadow:0 0 30px rgba(120,166,255,.45);
+}
+
+.verdict-text{
+  font-family:Cormorant Garamond, serif;
+  font-size:38px;
+  text-transform:capitalize;
+  font-weight:500;
+}
+
+.source-pill{
+  padding:9px 13px;
+  border-radius:999px;
+  background:rgba(255,255,255,.05);
+  border:1px solid rgba(240,168,48,.25);
+  color:var(--gold2);
+  font-family:Inter, system-ui, sans-serif;
+  font-size:11px;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  font-weight:600;
+}
+
+.result-url{
+  margin-top:18px;
+  margin-bottom:6px;
+  color:var(--muted);
+  font-family:Inter, system-ui, sans-serif;
+  font-size:13px;
+  word-break:break-all;
+  line-height:1.6;
+  opacity:.8;
+}
+
+.stats{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:14px;
+  margin-top:28px;
+}
+
+.stat{
+  padding:22px;
+  border-radius:20px;
+  border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.04);
+  backdrop-filter:blur(10px);
+  transition:all .3s ease;
+}
+
+.stat:hover{
+  background:rgba(255,255,255,.08);
+  border-color:rgba(240,168,48,.25);
+  transform:translateY(-2px);
+}
+
+.stat-num{
+  font-family:Cormorant Garamond, serif;
+  font-size:38px;
+  line-height:1;
+  color:var(--text);
+}
+
+.stat-label{
+  margin-top:8px;
+  color:var(--muted);
+  font-family:Inter, system-ui, sans-serif;
+  font-size:11px;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  font-weight:600;
+}
+
+.locked-box{
+  display:none;
+  margin-top:24px;
+  padding:20px;
+  border-radius:20px;
+  border:1px solid rgba(240,168,48,.25);
+  background:rgba(240,168,48,.08);
+  color:var(--gold2);
+  font-family:Inter, system-ui, sans-serif;
+  font-size:13px;
+  line-height:1.7;
+  animation:slideDown .3s ease;
+}
+
+.locked-box.show{
+  display:block;
+}
+
+.flagged{
+  margin-top:28px;
+}
+
+.flagged-title{
+  color:var(--muted);
+  font-family:Inter, system-ui, sans-serif;
+  font-size:11px;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  margin-bottom:12px;
+  font-weight:600;
+}
+
+.flag-list{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+}
+
+.flag{
+  padding:8px 12px;
+  border-radius:12px;
+  background:rgba(255,92,104,.08);
+  border:1px solid rgba(255,92,104,.25);
+  color:#ff9ca4;
+  font-family:Inter, system-ui, sans-serif;
+  font-size:11px;
+  font-weight:500;
+  transition:all .2s ease;
+}
+
+.flag:hover{
+  background:rgba(255,92,104,.12);
+  border-color:rgba(255,92,104,.45);
+}
+
+.result-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px;
+  margin-top:28px;
+}
+
+.message-box{
+  margin-top:22px;
+  padding:18px 20px;
+  border-radius:18px;
+  background:rgba(84,212,131,.08);
+  border:1px solid rgba(84,212,131,.25);
+  color:#a4e5c5;
+  font-family:Inter, system-ui, sans-serif;
+  font-size:13px;
+  line-height:1.7;
+  animation:slideDown .3s ease;
+}
+
+/* Sections */
+
+.section{
+  padding:90px 22px;
+  scroll-margin-top:96px;
+}
+
+.section-inner{
+  width:min(1120px,100%);
+  margin:0 auto;
+}
+
+.section-head{
+  text-align:center;
+  margin-bottom:50px;
+}
+
+.section-kicker{
+  color:var(--gold);
+  font-family:Inter, system-ui, sans-serif;
+  font-size:12px;
+  letter-spacing:.18em;
+  text-transform:uppercase;
+  margin-bottom:16px;
+  font-weight:700;
+}
+
+.section-title{
+  font-family:Cormorant Garamond, serif;
+  font-size:clamp(38px, 5vw, 66px);
+  line-height:.95;
+  font-weight:400;
+}
+
+.grid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:20px;
+}
+
+.feature-card,
+.plan-card,
+.history-card{
+  border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.04);
+  border-radius:24px;
+  padding:32px;
+  box-shadow:0 16px 40px rgba(0,0,0,.18);
+  transition:all .3s ease;
+}
+
+.feature-card:hover,
+.history-card:hover{
+  border-color:rgba(240,168,48,.25);
+  background:rgba(255,255,255,.07);
+  transform:translateY(-4px);
+}
+
+.feature-num{
+  color:var(--gold);
+  font-family:Inter, system-ui, sans-serif;
+  font-size:12px;
+  letter-spacing:.16em;
+  margin-bottom:20px;
+  font-weight:700;
+}
+
+.feature-title{
+  font-size:20px;
+  font-weight:700;
+  margin-bottom:12px;
+  line-height:1.3;
+}
+
+.feature-copy{
+  color:var(--muted);
+  line-height:1.8;
+  font-size:14px;
+  font-weight:400;
+}
+
+.plans{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:20px;
+}
+
+.plan-card{
+  position:relative;
+  overflow:hidden;
+}
+
+.plan-card.highlight{
+  border-color:rgba(240,168,48,.45);
+  background:linear-gradient(180deg, rgba(240,168,48,.12), rgba(255,255,255,.05));
+  transform:scale(1.02);
+}
+
+.plan-card.highlight::before{
+  content:"";
+  position:absolute;
+  top:-1px;
+  left:-1px;
+  right:-1px;
+  height:2px;
+  background:linear-gradient(90deg, transparent, var(--gold), transparent);
+}
+
+.plan-card:hover:not(.highlight){
+  border-color:rgba(240,168,48,.25);
+  background:rgba(255,255,255,.07);
+}
+
+.plan-name{
+  font-family:Cormorant Garamond, serif;
+  font-size:36px;
+  color:var(--text);
+  font-weight:500;
+}
+
+.plan-price{
+  margin-top:12px;
+  font-size:32px;
+  font-weight:700;
+}
+
+.plan-price span{
+  color:var(--muted);
+  font-size:14px;
+  font-weight:400;
+}
+
+.plan-list{
+  margin-top:26px;
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+  color:var(--muted);
+  font-size:14px;
+  line-height:1.6;
+}
+
+.plan-list div::before{
+  content:"✓";
+  color:var(--gold);
+  margin-right:10px;
+  font-weight:700;
+}
+
+.plan-card .btn{
+  width:100%;
+  margin-top:28px;
+}
+
+/* History */
+
+.history-card{
+  margin-top:32px;
+}
+
+.history-title{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:16px;
+  margin-bottom:18px;
+}
+
+.history-title h3{
+  font-family:Cormorant Garamond, serif;
+  font-size:28px;
+  font-weight:500;
+}
+
+.history-list{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.history-item{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:14px;
+  padding:14px 0;
+  border-bottom:1px solid rgba(255,255,255,.06);
+  color:var(--muted);
+  font-family:Inter, system-ui, sans-serif;
+  font-size:13px;
+  transition:all .2s ease;
+}
+
+.history-item:hover{
+  color:var(--text);
+}
+
+.history-item:last-child{
+  border-bottom:0;
+}
+
+.history-url{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.history-verdict{
+  text-transform:uppercase;
+  font-size:11px;
+  letter-spacing:.12em;
+  font-weight:600;
+}
+
+.safe-text{color:var(--green)}
+.suspicious-text{color:var(--orange)}
+.dangerous-text{color:var(--red)}
+.unknown-text{color:var(--blue)}
+
+/* Footer */
+
+.footer{
+  padding:48px 22px;
+  border-top:1px solid rgba(240,168,48,.12);
+  text-align:center;
+  color:var(--muted2);
+  font-family:Inter, system-ui, sans-serif;
+  font-size:11px;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  font-weight:600;
+}
+
+/* Responsive */
+
+@media(max-width:900px){
+  .nav{
+    padding:0 18px;
+  }
+
+  .brand-sub{
+    display:none;
+  }
+
+  .user-pill{
+    display:none !important;
+  }
+
+  .input-row{
+    flex-direction:column;
+  }
+
+  .scan-btn{
+    width:100%;
+    height:56px;
+  }
+
+  .stats{
+    grid-template-columns:repeat(2,1fr);
+  }
+
+  .grid,
+  .plans,
+  .product-map{
+    grid-template-columns:1fr;
+  }
+
+  .plan-card.highlight{
+    transform:scale(1);
+  }
+
+  .scanner{
+    padding:28px;
+  }
+
+  .scanner-shell{
+    margin-top:40px;
+  }
+}
+
+@media(max-width:520px){
+  .nav-right .btn.ghost{
+    display:none;
+  }
+
+  .brand-name{
+    font-size:21px;
+  }
+
+  .scanner-top{
+    flex-direction:column;
+  }
+
+  .stats{
+    grid-template-columns:1fr;
+  }
+
+  h1{
+    font-size:48px;
+  }
+
+  .hero{
+    padding:110px 18px 50px;
+  }
+
+  .verdict-text{
+    font-size:28px;
+  }
+
+  .kicker{
+    font-size:10px;
+  }
+}
+
+
+/* Product navigation */
+.tool-jump-row{
+  display:flex;
+  justify-content:center;
+  gap:12px;
+  flex-wrap:wrap;
+  margin-top:28px;
+  animation:fadeInHero .6s ease-out .35s both;
+}
+.tool-note{
+  margin-top:14px;
+  color:var(--muted2);
+  font-size:12px;
+  line-height:1.7;
+  max-width:680px;
+}
+.product-map{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:16px;
+  margin-bottom:38px;
+}
+.product-map-card{
+  border:1px solid rgba(240,168,48,.14);
+  background:rgba(255,255,255,.035);
+  border-radius:22px;
+  padding:22px;
+}
+.product-map-card h3{
+  font-size:16px;
+  margin-bottom:8px;
+}
+.product-map-card p{
+  color:var(--muted);
+  font-size:13px;
+  line-height:1.7;
+}
+
+/* SMS / WhatsApp Checker */
+.message-check-shell{
+  width:min(920px,100%);
+  margin:0 auto;
+  padding:2px;
+  border-radius:30px;
+  background:linear-gradient(135deg, rgba(240,168,48,.30), rgba(255,255,255,.06), rgba(120,166,255,.16));
+  box-shadow:var(--shadow);
+}
+.message-checker{
+  border-radius:29px;
+  background:linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.025)), rgba(6,6,14,.93);
+  border:1px solid rgba(255,255,255,.08);
+  padding:36px;
+}
+.message-input{
+  width:100%;
+  min-height:150px;
+  resize:vertical;
+  padding:18px 20px;
+  border-radius:18px;
+  border:1.5px solid rgba(240,168,48,.22);
+  background:rgba(255,255,255,.05);
+  color:var(--text);
+  outline:none;
+  font-size:15px;
+  font-family:Inter,system-ui,sans-serif;
+  line-height:1.7;
+  transition:all .3s ease;
+}
+.message-input:focus{
+  border-color:rgba(240,168,48,.65);
+  background:rgba(255,255,255,.08);
+  box-shadow:0 0 0 4px rgba(240,168,48,.1);
+}
+.message-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:16px}
+.message-result-card{
+  display:none;
+  margin-top:24px;
+  border-top:1px solid rgba(240,168,48,.12);
+  padding-top:24px;
+  animation:slideDown .4s ease;
+}
+.message-result-card.show{display:block}
+.reason-list{display:flex;flex-direction:column;gap:10px;margin-top:18px}
+.reason{
+  padding:12px 14px;
+  border-radius:14px;
+  border:1px solid rgba(240,168,48,.18);
+  background:rgba(255,255,255,.04);
+  color:var(--muted);
+  font-size:13px;
+  line-height:1.6;
+  transition:all .2s ease;
+}
+.reason:hover{
+  background:rgba(255,255,255,.07);
+  border-color:rgba(240,168,48,.28);
+}
+.message-note{
+  margin-top:16px;
+  color:var(--muted);
+  font-size:13px;
+  line-height:1.7;
+}
+
+
+/* Checkout loading overlay */
+.checkout-overlay{
+  position:fixed;
+  inset:0;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  background:rgba(3,3,10,.72);
+  backdrop-filter:blur(18px);
+  z-index:999;
+}
+.checkout-overlay.show{display:flex}
+.checkout-card{
+  width:min(420px,90%);
+  border:1px solid rgba(240,168,48,.28);
+  background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.035));
+  border-radius:26px;
+  padding:34px;
+  text-align:center;
+  box-shadow:0 30px 90px rgba(0,0,0,.55);
+}
+.checkout-card h3{
+  font-family:Cormorant Garamond,serif;
+  font-size:34px;
+  font-weight:500;
+  margin-bottom:10px;
+}
+.checkout-card p{
+  color:var(--muted);
+  font-size:13px;
+  line-height:1.7;
+}
+.checkout-spinner{
+  width:30px;
+  height:30px;
+  margin:0 auto 18px;
+  border-radius:50%;
+  border:3px solid rgba(240,168,48,.18);
+  border-top-color:var(--gold);
+  animation:spin .8s linear infinite;
+}
+
+.brand-logo-img{
+  width:42px;
+  height:42px;
+  object-fit:contain;
+  border-radius:14px;
+  filter:drop-shadow(0 0 18px rgba(240,168,48,.28));
+}
+
+.legal-footer{
+  display:flex;
+  justify-content:center;
+  gap:18px;
+  flex-wrap:wrap;
+  padding:38px 20px 48px;
+  color:var(--muted);
+  font-family:DM Mono,monospace;
+  font-size:12px;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+}
+.legal-footer a{
+  color:var(--muted);
+  text-decoration:none;
+}
+.legal-footer a:hover{color:var(--gold2)}
+
 </style>
 </head>
+
 <body>
+<div class="starfield-3d" id="starfield3d">
+  <div class="stars-container" id="starsContainer"></div>
+</div>
+
+<div id="checkoutOverlay" class="checkout-overlay">
+  <div class="checkout-card">
+    <div class="checkout-spinner"></div>
+    <h3>Preparing checkout</h3>
+    <p>LidaShield is opening Stripe's secure payment page. This can take a moment in sandbox mode.</p>
+  </div>
+</div>
+
 <div class="page">
+
   <nav class="nav">
     <a class="brand" href="/">
-      <div class="logo-mark"></div>
-      <div><div class="brand-name">LidaShield</div><div class="brand-sub">AI Scam Intelligence</div></div>
+      <img class="brand-logo-img" src="/static/lidashield-icon.png" alt="LidaShield logo">
+      <div class="brand-text">
+        <div class="brand-name">LidaShield</div>
+        <div class="brand-sub">Scam Intelligence</div>
+      </div>
     </a>
-    <div class="nav-right">
-      <span id="userPill" class="user-pill"></span>
-      <a id="dashboardBtn" class="btn hide" href="/dashboard">Dashboard</a>
-      <a id="loginBtn" class="btn gold" href="/login">Login</a>
-      <a id="logoutBtn" class="btn hide" href="/logout">Logout</a>
+
+    <div id="navRight" class="nav-right auth-loading">
+      <div id="userPill" class="user-pill" onclick="window.location.href='/dashboard'" title="Open dashboard" style="cursor:pointer;">
+        <img id="avatar" class="avatar" alt="">
+        <span id="userName">Signed in</span>
+        <span id="planBadge" class="plan-badge">free</span>
+      </div>
+
+      <a id="loginBtn" class="btn gold" href="/login">Sign in</a>
+      <a id="logoutBtn" class="btn ghost hide" href="/logout">Logout</a>
     </div>
   </nav>
 
-  <section class="hero">
-    <div class="kicker">Database-backed AI Scam Analyst</div>
-    <h1>Stop scam links<br><em>before</em> they trap you.</h1>
-    <p class="hero-copy">LidaShield checks links, WhatsApp messages, SMS alerts, emails, phone indicators, user reports, and database intelligence to return evidence-backed scam verdicts.</p>
-  </section>
+  <main class="hero">
+    <div class="kicker">Free Scam Detection Tool</div>
 
-  <main class="shell" id="scanner">
-    <section class="panel">
-      <div class="panel-head">
-        <div><div class="panel-title">Link Scanner</div><div class="panel-small">Checks LidaShield's own database first, then intelligence graph signals, then external scan cache when configured.</div></div>
-        <div class="chip">DB-first scanner</div>
-      </div>
-      <div class="input-row">
-        <input id="urlInput" class="input" placeholder="Paste suspicious URL, e.g. https://example.xyz/login">
-        <button id="scanBtn" class="primary-btn">Scan</button>
-      </div>
-      <div id="scanResult" class="result"></div>
-    </section>
+    <h1>
+      Scam protection<br>
+      <em>command centre.</em>
+    </h1>
 
-    <section class="panel" id="message-checker">
-      <div class="panel-head">
-        <div><div class="panel-title">AI Scam Analyst</div><div class="panel-small">Paste a WhatsApp, SMS, email, or Telegram message. The analyst extracts URLs, domains, emails, phone numbers, brands, and scam signals before checking LidaShield memory.</div></div>
-        <div class="chip">Memory + evidence</div>
-      </div>
-      <textarea id="messageInput" class="textarea" placeholder="Paste scam message here...">DBS Alert: Your account will be suspended within 24 hours. Verify your OTP and login here: https://dbs-login-verify-account-security.xyz</textarea>
-      <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap">
-        <button id="messageBtn" class="primary-btn" style="height:52px">Analyze</button>
-        <button id="sampleBtn" class="btn">Use DBS Test</button>
-      </div>
-      <div id="messageResult" class="result"></div>
-    </section>
+    <p class="hero-copy">
+      Check suspicious links and messages from WhatsApp, SMS, email, or social media.
+      LidaShield checks verified evidence first, and unknown links are not called suspicious without proof.
+    </p>
 
-    <section class="panel" id="report-panel">
-      <div class="panel-head">
-        <div><div class="panel-title">Report Scam Intelligence</div><div class="panel-small">Submit suspicious URLs or messages. Reports feed LidaShield's intelligence graph and duplicate detection layer.</div></div>
-        <div class="chip">Community memory</div>
+    <div class="tool-jump-row">
+      <a class="btn gold" href="#link-scanner">Link scanner</a>
+      <a class="btn" href="#message-checker">Message checker</a>
+      <a class="btn" href="/dashboard">Dashboard</a>
+    </div>
+    <div class="tool-note">Start with the scanner for links, or use the message checker for suspicious SMS and WhatsApp text.</div>
+
+    <section id="link-scanner" class="scanner-shell">
+      <div class="scanner">
+        <div class="scanner-top">
+          <div>
+            <div class="scanner-title">1. Link scanner</div>
+            <div class="scanner-small">Verified database + pending reports</div>
+          </div>
+          <div class="status-chip">Live protection</div>
+        </div>
+
+        <div class="input-row">
+          <input id="urlInput" class="url-input" placeholder="Paste a suspicious link here..." autocomplete="off">
+          <button id="scanBtn" class="scan-btn">Scan</button>
+        </div>
+
+        <div id="loading" class="loading">
+          <div class="spinner"></div>
+          Checking LidaShield verified database...
+        </div>
+
+        <div id="errorBox" class="error"></div>
+
+        <div id="result" class="result">
+          <div class="verdict-line">
+            <div class="verdict-left">
+              <div id="verdictOrb" class="verdict-orb"></div>
+              <div id="verdictText" class="verdict-text">Unknown</div>
+            </div>
+            <div id="sourcePill" class="source-pill">source</div>
+          </div>
+
+          <div id="resultUrl" class="result-url"></div>
+
+          <div class="stats">
+            <div class="stat">
+              <div id="scoreNum" class="stat-num">0</div>
+              <div class="stat-label">Risk score</div>
+            </div>
+            <div class="stat">
+              <div id="maliciousNum" class="stat-num">0</div>
+              <div class="stat-label">Malicious</div>
+            </div>
+            <div class="stat">
+              <div id="suspiciousNum" class="stat-num">0</div>
+              <div class="stat-label">Suspicious</div>
+            </div>
+            <div class="stat">
+              <div id="harmlessNum" class="stat-num">0</div>
+              <div class="stat-label">Harmless</div>
+            </div>
+          </div>
+
+          <div id="lockedBox" class="locked-box">
+            You reached your plan's daily detail limit. The verdict remains visible, but advanced scan details are locked.
+            Upgrade to Shield or Pro to unlock more scans and history.
+          </div>
+
+          <div id="flaggedSection" class="flagged">
+            <div class="flagged-title">Verification evidence</div>
+            <div id="flagList" class="flag-list"></div>
+          </div>
+
+          <div id="messageBox" class="message-box"></div>
+
+          <div class="result-actions">
+            <button id="reportBtn" class="btn">Report this link</button>
+            <button class="btn gold" onclick="document.getElementById('plans').scrollIntoView()">Upgrade</button>
+          </div>
+        </div>
       </div>
-      <div class="input-row">
-        <input id="reportUrl" class="input" placeholder="URL to report, optional">
-        <select id="reportCategory" style="max-width:220px"><option value="phishing">Phishing</option><option value="bank_impersonation">Bank impersonation</option><option value="otp_theft">OTP theft</option><option value="parcel_scam">Parcel scam</option><option value="job_scam">Job scam</option><option value="other">Other</option></select>
-      </div>
-      <textarea id="reportMessage" class="textarea" style="margin-top:12px" placeholder="Message details, optional"></textarea>
-      <button id="reportBtn" class="primary-btn" style="height:52px;margin-top:12px">Submit report</button>
-      <div id="reportResult" class="result"></div>
     </section>
   </main>
 
-  <section class="section">
-    <h2>Why this is not a toy scanner</h2>
-    <div class="cards">
-      <div class="card"><h3>Database first</h3><p>The scanner checks LidaShield's own scam URL database before using any external signal.</p></div>
-      <div class="card"><h3>Indicator extraction</h3><p>The AI analyst extracts URLs, domains, emails, phone numbers, brands, urgency, OTP requests, and credential requests.</p></div>
-      <div class="card"><h3>Intelligence graph</h3><p>User reports and analyst observations become memory for future verdicts instead of disappearing after one scan.</p></div>
+
+  <section id="message-checker" class="section">
+    <div class="section-inner">
+      <div class="section-head">
+        <div class="section-kicker">Protection Tool 2</div>
+        <div class="section-title">SMS / WhatsApp scam checker</div>
+      </div>
+
+      <section class="message-check-shell">
+        <div class="message-checker">
+          <div class="scanner-top">
+            <div>
+              <div class="scanner-title">2. AI Scam Analyst</div>
+              <div class="scanner-small">Database-backed message intelligence + indicator extraction</div>
+            </div>
+            <div class="status-chip">Beta</div>
+          </div>
+
+          <textarea id="messageInput" class="message-input" placeholder="Example: DBS Alert: Your account will be suspended within 24 hours. Verify your OTP and login here..."></textarea>
+
+          <div class="message-actions">
+            <button id="messageCheckBtn" class="btn gold">Check Message</button>
+            <button class="btn" onclick="document.getElementById('messageInput').value=''">Clear</button>
+          </div>
+
+          <div id="messageLoading" class="loading">
+            <div class="spinner"></div>
+            Extracting indicators and checking LidaShield intelligence graph...
+          </div>
+
+          <div id="messageResult" class="message-result-card">
+            <div class="verdict-line">
+              <div class="verdict-left">
+                <div id="messageOrb" class="verdict-orb"></div>
+                <div id="messageVerdict" class="verdict-text">Unknown</div>
+              </div>
+              <div class="source-pill">AI analyst</div>
+            </div>
+
+            <div class="stats">
+              <div class="stat">
+                <div id="messageScore" class="stat-num">0</div>
+                <div class="stat-label">Risk score</div>
+              </div>
+              <div class="stat">
+                <div id="messageLinks" class="stat-num">0</div>
+                <div class="stat-label">Links found</div>
+              </div>
+              <div class="stat">
+                <div id="messageSignals" class="stat-num">0</div>
+                <div class="stat-label">Signals</div>
+              </div>
+              <div class="stat">
+                <div id="messageDbHits" class="stat-num">0</div>
+                <div class="stat-label">DB hits</div>
+              </div>
+            </div>
+
+            <div class="flagged">
+              <div class="flagged-title">Why LidaShield gave this result</div>
+              <div id="messageReasons" class="reason-list"></div>
+            </div>
+
+            <div id="messageLockedBox" class="locked-box">
+              Upgrade to Shield to unlock the full scam explanation and all detected signals.
+              <div style="margin-top:14px;">
+                <button class="btn gold" onclick="upgrade('shield')">Unlock Shield</button>
+              </div>
+            </div>
+
+            <div class="message-note">
+              This analysis uses LidaShield’s database, intelligence graph, indicator extraction, and supporting behavioural signals. It does not replace human judgment, but it is designed to become a database-backed scam AI analyst.
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   </section>
 
-  <section class="section" id="pricing">
-    <h2>Plans</h2>
-    <div class="plans">
-      <div class="card"><h3>Free</h3><div class="price">S$0</div><p>Basic link and message checks with limited daily usage.</p></div>
-      <div class="card"><h3>Shield</h3><div class="price">S$9.90</div><p>Higher scan limits, dashboard history, and stronger protection for regular users.</p><button class="btn gold" onclick="checkout('shield')">Upgrade Shield</button></div>
-      <div class="card"><h3>Pro</h3><div class="price">S$29.90</div><p>Heavy-use protection for power users, creators, small teams, and future enterprise workflows.</p><button class="btn gold" onclick="checkout('pro')">Upgrade Pro</button></div>
+
+
+  <section class="section">
+    <div class="section-inner">
+      <div class="section-head">
+        <div class="section-kicker">How LidaShield works</div>
+        <div class="section-title">A cleaner product flow</div>
+      </div>
+
+      <div class="product-map">
+        <div class="product-map-card">
+          <h3>1. Check</h3>
+          <p>Users scan a suspicious link or paste a suspicious message.</p>
+        </div>
+        <div class="product-map-card">
+          <h3>2. Explain</h3>
+          <p>LidaShield shows the verdict, risk score, and the reasons behind it.</p>
+        </div>
+        <div class="product-map-card">
+          <h3>3. Remember</h3>
+          <p>Signed-in users get history, reports, and a dashboard that becomes the paid product layer.</p>
+        </div>
+      </div>
     </div>
   </section>
 
   <section class="section">
-    <h2>Feedback</h2>
-    <div class="card">
-      <textarea id="feedbackMessage" class="textarea" placeholder="Tell us what to improve or report a bug."></textarea>
-      <button id="feedbackBtn" class="primary-btn" style="height:52px;margin-top:12px">Send feedback</button>
-      <div id="feedbackResult" class="result"></div>
+    <div class="section-inner">
+      <div class="section-head">
+        <div class="section-kicker">The foundation</div>
+        <div class="section-title">What LidaShield is building</div>
+      </div>
+
+      <div class="grid">
+        <div class="feature-card">
+          <div class="feature-num">01</div>
+          <div class="feature-title">Scam link database</div>
+          <div class="feature-copy">
+            LidaShield checks its own database first. User reports go into pending review first. Only verified evidence becomes part of the public scam database.
+          </div>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-num">02</div>
+          <div class="feature-title">Account protection</div>
+          <div class="feature-copy">
+            Sign in with Google, save scan history, track usage, and unlock more powerful protection with paid plans.
+          </div>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-num">03</div>
+          <div class="feature-title">SEA scam intelligence</div>
+          <div class="feature-copy">
+            The long-term goal is to detect scam patterns across Singapore and Southeast Asia, not just generic malware.
+          </div>
+        </div>
+      </div>
+
+      <div class="history-card">
+        <div class="history-title">
+          <h3>Your recent scans</h3>
+          <button class="btn" onclick="loadHistory()">Refresh</button>
+        </div>
+        <div id="historyList" class="history-list">
+          <div class="history-item">
+            <div class="history-url">Sign in to save and view scan history.</div>
+            <div class="history-verdict unknown-text">guest</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="plans" class="section">
+    <div class="section-inner">
+      <div class="section-head">
+        <div class="section-kicker">Plans</div>
+        <div class="section-title">Protection that scales</div>
+      </div>
+
+      <div class="plans">
+        <div class="plan-card">
+          <div class="plan-name">Free</div>
+          <div class="plan-price">$0 <span>/ forever</span></div>
+          <div class="plan-list">
+            <div>50 scans per day</div>
+            <div>Basic verdicts</div>
+            <div>Community scam reporting</div>
+            <div>Limited scan details</div>
+          </div>
+          <a class="btn" href="/login">Start free</a>
+        </div>
+
+        <div class="plan-card highlight">
+          <div class="plan-name">Shield</div>
+          <div class="plan-price">$9.90 <span>/ month</span></div>
+          <div class="plan-list">
+            <div>500 scans per day</div>
+            <div>Full scan and message explanations</div>
+            <div>Scan history</div>
+            <div>Saved message-check history</div>
+          </div>
+          <button class="btn gold" onclick="upgrade('shield')">Upgrade to Shield</button>
+        </div>
+
+        <div class="plan-card">
+          <div class="plan-name">Pro</div>
+          <div class="plan-price">$29.90 <span>/ month</span></div>
+          <div class="plan-list">
+            <div>Very high scan limit</div>
+            <div>Priority features</div>
+            <div>API access coming soon</div>
+            <div>Business tools coming soon</div>
+          </div>
+          <button class="btn" disabled style="pointer-events:none;opacity:.65;">Coming soon</button>
+        </div>
+      </div>
     </div>
   </section>
 
   <footer class="footer">
-    <p>LidaShield AI Scam Intelligence · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/health">Health</a></p>
+    LidaShield © 2026 — Scam intelligence for Singapore and Southeast Asia
   </footer>
+
 </div>
-<div id="toast" class="toast"></div>
+
+<footer class="legal-footer">
+  <a href="/contact">Contact</a>
+  <a href="/feedback">Feedback</a>
+  <a href="/request-review">Request Review</a>
+  <a href="/privacy">Privacy</a>
+  <a href="/terms">Terms</a>
+  <a href="/disclaimer">Disclaimer</a>
+</footer>
+
 <script>
-const $ = id => document.getElementById(id);
-function esc(str){return String(str ?? '').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#039;','"':'&quot;'}[c]))}
-function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),4200)}
-async function postJSON(url, body){const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await res.json().catch(()=>({error:'Invalid server response'}));if(!res.ok)throw new Error(data.error||data.details||'Request failed');return data}
-function verdictClass(v){v=String(v||'unknown').toLowerCase();if(v.includes('danger'))return'dangerous';if(v.includes('susp'))return'suspicious';if(v.includes('safe')||v.includes('low'))return'low-risk';return'unknown'}
-function renderScan(data){const v=verdictClass(data.verdict);return `<div class='result-top'><div><div class='verdict ${v}'>${esc(data.verdict)}</div><div class='score'>Score ${data.score ?? 0}/100 · ${esc(data.source||'lidashield')}</div></div><div class='chip'>${data.known_by_lidashield?'DB HIT':'NO DB HIT'}</div></div><div class='grid'><div class='metric'><b>${data.malicious??0}</b><span>Malicious</span></div><div class='metric'><b>${data.suspicious??0}</b><span>Suspicious</span></div><div class='metric'><b>${data.flagged_total??0}</b><span>Signals</span></div></div><div class='list'><div class='li evidence'>${esc(data.message||data.intelligence_warning||'Scan completed.')}</div><div class='li'>${esc(data.normalized_url||'')}</div></div>`}
-function renderMessage(data){const v=verdictClass(data.verdict);const ind=data.indicators||{};const db=data.database_hits||[];const graph=data.intelligence_graph_hits||[];const reasons=data.reasons||[];return `<div class='result-top'><div><div class='verdict ${v}'>${esc(data.verdict)}</div><div class='score'>Risk score ${data.score ?? 0}/100 · ${esc(data.evidence_strength||'analysis')}</div></div><div class='chip'>${db.length} DB hits · ${graph.length} graph</div></div><div class='grid'><div class='metric'><b>${(ind.urls||[]).length}</b><span>URLs</span></div><div class='metric'><b>${(ind.signals||[]).length}</b><span>Signals</span></div><div class='metric'><b>${db.length}</b><span>DB Evidence</span></div></div><div class='list'><div class='li evidence'><b>Analyst summary:</b> ${esc(data.analyst_summary)}</div>${db.map(x=>`<div class='li evidence'><b>DB:</b> ${esc(x.normalized_url||x.url||x.indicator_type)} · ${esc(x.verdict)} · ${esc(x.source)}</div>`).join('')}${graph.map(x=>`<div class='li evidence'><b>Graph:</b> ${esc(x.domain||x.normalized_url||x.phone||x.email)} · confidence ${esc(x.confidence_score)}</div>`).join('')}${reasons.map(r=>`<div class='li'>${esc(r)}</div>`).join('')}${(ind.urls||[]).map(u=>`<div class='li'><b>Extracted URL:</b> ${esc(u)}</div>`).join('')}</div>`}
-async function loadMe(){try{const r=await fetch('/api/me');const d=await r.json();if(d.authenticated){$('loginBtn').classList.add('hide');$('logoutBtn').classList.remove('hide');$('dashboardBtn').classList.remove('hide');$('userPill').classList.add('show');$('userPill').textContent=(d.user.plan||'free').toUpperCase()+' · '+(d.user.email||'');}else{$('loginBtn').classList.remove('hide');$('logoutBtn').classList.add('hide');$('dashboardBtn').classList.add('hide');$('userPill').classList.remove('show')}}catch(e){}}
-$('scanBtn').onclick=async()=>{const btn=$('scanBtn'), box=$('scanResult');btn.disabled=true;box.className='result show';box.innerHTML='<div class=li>Scanning...</div>';try{const data=await postJSON('/scan',{url:$('urlInput').value});box.innerHTML=renderScan(data)}catch(e){box.innerHTML='<div class="li dangerous">'+esc(e.message)+'</div>'}finally{btn.disabled=false}}
-$('messageBtn').onclick=async()=>{const btn=$('messageBtn'), box=$('messageResult');btn.disabled=true;box.className='result show';box.innerHTML='<div class=li>Analyzing with LidaShield memory...</div>';try{const data=await postJSON('/check-message',{message:$('messageInput').value});box.innerHTML=renderMessage(data)}catch(e){box.innerHTML='<div class="li dangerous">'+esc(e.message)+'</div>'}finally{btn.disabled=false}}
-$('sampleBtn').onclick=()=>{$('messageInput').value='DBS Alert: Your account will be suspended within 24 hours. Verify your OTP and login here: https://dbs-login-verify-account-security.xyz';$('messageBtn').click()}
-$('reportBtn').onclick=async()=>{const box=$('reportResult');box.className='result show';box.innerHTML='<div class=li>Saving report...</div>';try{const data=await postJSON('/report',{url:$('reportUrl').value,message:$('reportMessage').value,category:$('reportCategory').value});box.innerHTML='<div class="li evidence">Report saved. ID '+esc(data.report_id)+'. Status: '+esc(data.status)+'</div>'}catch(e){box.innerHTML='<div class="li dangerous">'+esc(e.message)+'</div>'}}
-$('feedbackBtn').onclick=async()=>{const box=$('feedbackResult');box.className='result show';try{const data=await postJSON('/api/feedback',{message:$('feedbackMessage').value,request_type:'feedback'});box.innerHTML='<div class="li evidence">Feedback saved. ID '+esc(data.feedback_id)+'</div>'}catch(e){box.innerHTML='<div class="li dangerous">'+esc(e.message)+'</div>'}}
-async function checkout(plan){try{const data=await postJSON('/create-checkout-session',{plan});location.href=data.url}catch(e){toast(e.message)}}
-window.checkout=checkout;
-loadMe();
+let currentUser = null;
+let lastScannedUrl = "";
+
+const $ = (id) => document.getElementById(id);
+
+// ============================================================
+// 3D Interactive Starfield with Idle Animation
+// ============================================================
+
+function createStarfield3D(){
+  const container = $("starsContainer");
+  const starCount = 150;
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  
+  const stars = [];
+  
+  for(let i = 0; i < starCount; i++){
+    const star = document.createElement("div");
+    star.className = "star-3d";
+    
+    const x = Math.random() * width;
+    const y = Math.random() * height;
+    const z = Math.random() * 1000 - 500;
+    
+    star.style.left = x + "px";
+    star.style.top = y + "px";
+    star.style.transform = `translateZ(${z}px)`;
+    
+    container.appendChild(star);
+    
+    stars.push({
+      element: star,
+      x: x,
+      y: y,
+      z: z,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: (Math.random() - 0.5) * 0.5,
+      vz: (Math.random() - 0.5) * 2
+    });
+  }
+  
+  let mouseX = width / 2;
+  let mouseY = height / 2;
+  let targetRotX = 0;
+  let targetRotY = 0;
+  let rotX = 0;
+  let rotY = 0;
+  let time = 0;
+  
+  // Idle animation: gentle continuous rotation
+  function updateIdleRotation(){
+    time += 0.003;
+    targetRotX = Math.sin(time) * 8;
+    targetRotY = Math.cos(time * 0.7) * 12;
+  }
+  
+  document.addEventListener("mousemove", (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    
+    // Blend mouse direction into the target
+    const mouseRotY = (mouseX / width - 0.5) * 20;
+    const mouseRotX = (mouseY / height - 0.5) * -20;
+    
+    targetRotY = mouseRotY;
+    targetRotX = mouseRotX;
+  });
+  
+  function animate(){
+    // Always update idle rotation
+    updateIdleRotation();
+    
+    // Smooth interpolation - always rotating
+    rotX += (targetRotX - rotX) * 0.08;
+    rotY += (targetRotY - rotY) * 0.08;
+    
+    const starsContainer = $("starsContainer");
+    starsContainer.style.transform = `rotateX(${rotX}deg) rotateY(${rotY}deg)`;
+    
+    requestAnimationFrame(animate);
+  }
+  
+  animate();
+}
+
+createStarfield3D();
+
+// ============================================================
+// User Auth
+// ============================================================
+
+function updatePlanButtons(){
+  if(!currentUser){
+    return;
+  }
+
+  const plan = (currentUser.plan || "free").toLowerCase();
+
+  document.querySelectorAll("button, a.btn").forEach(el => {
+    const txt = (el.textContent || "").toLowerCase();
+
+    if(txt.includes("start free")){
+      el.textContent = "Current account";
+      el.disabled = true;
+      el.style.pointerEvents = "none";
+      el.style.opacity = ".65";
+    }
+
+    if(plan === "shield" && (txt.includes("upgrade to shield") || txt.includes("unlock shield"))){
+      el.textContent = "Current plan";
+      el.disabled = true;
+      el.style.pointerEvents = "none";
+      el.style.opacity = ".65";
+    }
+
+    if(plan === "pro" && (txt.includes("upgrade to shield") || txt.includes("unlock shield"))){
+      el.textContent = "Included in Pro";
+      el.disabled = true;
+      el.style.pointerEvents = "none";
+      el.style.opacity = ".65";
+    }
+
+    if(plan === "pro" && txt.includes("coming soon")){
+      el.textContent = "Current plan";
+      el.disabled = true;
+      el.style.pointerEvents = "none";
+      el.style.opacity = ".65";
+    }
+  });
+}
+
+async function loadMe(){
+  try{
+    const res = await fetch("/api/me");
+    const data = await res.json();
+
+    currentUser = data.user;
+
+    if(data.authenticated){
+      $("loginBtn").classList.add("hide");
+      $("logoutBtn").classList.remove("hide");
+      $("userPill").classList.add("show");
+
+      $("userName").textContent = currentUser.name || currentUser.email;
+      $("planBadge").textContent = currentUser.plan || "free";
+
+      if(currentUser.avatar_url){
+        $("avatar").src = currentUser.avatar_url;
+      }
+
+      updatePlanButtons();
+    }else{
+      $("loginBtn").classList.remove("hide");
+      $("logoutBtn").classList.add("hide");
+      $("userPill").classList.remove("show");
+    }
+  }catch(e){
+    console.log(e);
+  }finally{
+    $("navRight").classList.remove("auth-loading");
+  }
+}
+
+async function loadHistory(){
+  const list = $("historyList");
+
+  try{
+    const res = await fetch("/api/history");
+    const data = await res.json();
+
+    if(!data.history || data.history.length === 0){
+      list.innerHTML = `
+        <div class="history-item">
+          <div class="history-url">${currentUser ? "No scans yet." : "Sign in to save and view scan history."}</div>
+          <div class="history-verdict unknown-text">${currentUser ? "empty" : "guest"}</div>
+        </div>
+      `;
+      return;
+    }
+
+    list.innerHTML = data.history.map(item => {
+      const verdict = item.verdict || "unknown";
+      return `
+        <div class="history-item">
+          <div class="history-url">${escapeHtml(item.url)}</div>
+          <div class="history-verdict ${verdict}-text">${escapeHtml(verdict)}</div>
+        </div>
+      `;
+    }).join("");
+  }catch(e){
+    console.log(e);
+  }
+}
+
+function escapeHtml(str){
+  return String(str || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function showError(message){
+  $("errorBox").textContent = message;
+  $("errorBox").classList.add("show");
+}
+
+function clearError(){
+  $("errorBox").textContent = "";
+  $("errorBox").classList.remove("show");
+}
+
+function displayVerdict(verdict){
+  if(verdict === "safe"){
+    return "Low risk";
+  }
+
+  if(verdict === "dangerous"){
+    return "Dangerous";
+  }
+
+  if(verdict === "suspicious"){
+    return "Suspicious";
+  }
+
+  if(verdict === "unknown"){
+    return "Unknown";
+  }
+
+  return verdict || "Unknown";
+}
+
+function formatSourceLabel(data){
+  if(data.known_by_lidashield){
+    return "LidaShield database";
+  }
+
+  if(data.source === "lidashield_intelligence"){
+    return "Unverified intelligence";
+  }
+
+  if(data.source === "lidashield_watchlist"){
+    return "Watchlist intelligence";
+  }
+
+  if(data.source === "external_intelligence" || data.source === "virustotal"){
+    return "External intelligence";
+  }
+
+  if(data.source === "external_cache"){
+    return "External cache";
+  }
+
+  if(data.source === "lidashield_unverified"){
+    return "Not in database";
+  }
+
+  if(data.source === "urlhaus" || data.source === "openphish"){
+    return "Verified threat feed";
+  }
+
+  return data.source || "LidaShield check";
+}
+
+function sourceEvidenceLabel(source){
+  if(source === "openphish"){
+    return "OpenPhish phishing feed";
+  }
+
+  if(source === "urlhaus"){
+    return "URLhaus malware URL feed";
+  }
+
+  if(source === "admin_test"){
+    return "Admin verified test record";
+  }
+
+  if(source === "external_cache"){
+    return "Cached external evidence";
+  }
+
+  if(source === "user_report"){
+    return "Legacy user report evidence";
+  }
+
+  return "LidaShield verified database";
+}
+
+async function scanUrl(){
+  const url = $("urlInput").value.trim();
+
+  if(!url){
+    showError("Paste a suspicious URL first.");
+    return;
+  }
+
+  clearError();
+  $("result").classList.remove("show");
+  $("loading").classList.add("show");
+  $("scanBtn").disabled = true;
+  lastScannedUrl = url;
+
+  try{
+    const res = await fetch("/scan", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({url})
+    });
+
+    const contentType = res.headers.get("content-type") || "";
+    let data = {};
+
+    if(contentType.includes("application/json")){
+      data = await res.json();
+    }else{
+      await res.text();
+      throw new Error("Server returned a non-JSON error. Check Render logs for /scan.");
+    }
+
+if(!res.ok){
+  throw new Error(data.details || data.error || "Scan failed.");
+}
+
+    showResult(data);
+    loadMe();
+    loadHistory();
+  }catch(e){
+    showError(e.message || "Something went wrong.");
+  }finally{
+    $("loading").classList.remove("show");
+    $("scanBtn").disabled = false;
+  }
+}
+
+function showResult(data){
+  const verdict = data.verdict || "unknown";
+
+  $("result").classList.add("show");
+
+  $("verdictOrb").className = `verdict-orb ${verdict}`;
+  $("verdictText").textContent = displayVerdict(verdict);
+  $("sourcePill").textContent = formatSourceLabel(data);
+
+  $("resultUrl").textContent = data.normalized_url || data.url || "";
+
+  $("scoreNum").textContent = data.score ?? 0;
+  $("maliciousNum").textContent = data.locked ? "—" : (data.malicious ?? 0);
+  $("suspiciousNum").textContent = data.locked ? "—" : (data.suspicious ?? 0);
+  $("harmlessNum").textContent = data.locked ? "—" : (data.harmless ?? 0);
+
+  $("messageBox").textContent = data.message || "";
+
+  if(data.locked){
+    $("lockedBox").classList.add("show");
+    $("flaggedSection").style.display = "none";
+  }else{
+    $("lockedBox").classList.remove("show");
+    $("flaggedSection").style.display = "block";
+
+    const flagged = data.flagged || [];
+    if(flagged.length === 0){
+      if(data.known_by_lidashield){
+        $("flagList").innerHTML = `<span class="flag">${escapeHtml(sourceEvidenceLabel(data.source))}</span>`;
+      }else{
+        $("flagList").innerHTML = `<span class="flag">No verified scam evidence yet</span>`;
+      }
+    }else{
+      $("flagList").innerHTML = flagged.map(name => {
+        return `<span class="flag">${escapeHtml(name)}</span>`;
+      }).join("");
+    }
+  }
+}
+
+async function checkMessage(){
+  const message = $("messageInput").value.trim();
+
+  if(!message){
+    showError("Paste a suspicious SMS, WhatsApp message, or email text first.");
+    document.getElementById("message-checker").scrollIntoView();
+    return;
+  }
+
+  clearError();
+  $("messageResult").classList.remove("show");
+  $("messageLoading").classList.add("show");
+  $("messageCheckBtn").disabled = true;
+
+  try{
+    const res = await fetch("/check-message", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({message})
+    });
+
+    const data = await res.json();
+
+    if(!res.ok){
+      throw new Error(data.details || data.error || "Message check failed.");
+    }
+
+    showMessageResult(data);
+  }catch(e){
+    showError(e.message || "Message check failed.");
+  }finally{
+    $("messageLoading").classList.remove("show");
+    $("messageCheckBtn").disabled = false;
+  }
+}
+
+function showMessageResult(data){
+  const verdict = data.verdict || "unknown";
+  $("messageResult").classList.add("show");
+  $("messageOrb").className = `verdict-orb ${verdict}`;
+  $("messageVerdict").textContent = displayVerdict(verdict);
+  $("messageScore").textContent = data.score ?? 0;
+  $("messageLinks").textContent = (data.extracted_urls || []).length;
+  $("messageSignals").textContent = data.signal_count ?? 0;
+  $("messageDbHits").textContent = (data.database_hits || []).length;
+
+  const reasons = data.reasons || [];
+  if(reasons.length === 0){
+    $("messageReasons").innerHTML = `<div class="reason">No major scam signals detected.</div>`;
+  }else{
+    $("messageReasons").innerHTML = reasons.map(reason => `<div class="reason">${escapeHtml(reason)}</div>`).join("");
+  }
+
+  const lockedBox = $("messageLockedBox");
+  if(lockedBox){
+    if(data.advanced_locked){
+      lockedBox.classList.add("show");
+      lockedBox.childNodes[0].textContent = data.locked_message || "Upgrade to Shield to unlock the full scam explanation and all detected signals.";
+    }else{
+      lockedBox.classList.remove("show");
+    }
+  }
+}
+
+let reportSubmitting = false;
+let reportCooldownUntil = 0;
+let reportCooldownTimer = null;
+
+function startReportCooldown(seconds){
+  const btn = $("reportBtn");
+  if(!btn){ return; }
+
+  reportCooldownUntil = Date.now() + seconds * 1000;
+
+  if(reportCooldownTimer){
+    clearInterval(reportCooldownTimer);
+  }
+
+  reportCooldownTimer = setInterval(() => {
+    const remaining = Math.ceil((reportCooldownUntil - Date.now()) / 1000);
+
+    if(remaining <= 0){
+      clearInterval(reportCooldownTimer);
+      reportCooldownTimer = null;
+      btn.disabled = false;
+      btn.textContent = "Report this link";
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = `Report cooldown ${remaining}s`;
+  }, 250);
+}
+
+async function reportCurrent(){
+  const btn = $("reportBtn");
+  const url = lastScannedUrl || $("urlInput").value.trim();
+
+  if(reportSubmitting){
+    return;
+  }
+
+  const cooldownRemaining = Math.ceil((reportCooldownUntil - Date.now()) / 1000);
+  if(cooldownRemaining > 0){
+    $("messageBox").textContent = `Please wait ${cooldownRemaining}s before sending another report.`;
+    return;
+  }
+
+  if(!url){
+    showError("Scan or paste a URL first before reporting.");
+    return;
+  }
+
+  reportSubmitting = true;
+
+  if(btn){
+    btn.dataset.originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Submitting report...";
+  }
+
+  $("messageBox").textContent = "Submitting report for admin review...";
+
+  try{
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    const res = await fetch("/report", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        url,
+        category:"url",
+        message:"User reported this link from the LidaShield scanner."
+      }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    const data = await res.json();
+
+    if(!res.ok){
+      throw new Error(data.details || data.error || "Report failed.");
+    }
+
+    let reportMsg = data.message || "Report received. It is now pending review and will not affect the public verdict until verified.";
+    if(data.triage){
+      reportMsg += ` Auto-triage: ${data.triage.status || "watchlist"} (${data.triage.score || 0}/100).`;
+    }
+    $("messageBox").textContent = reportMsg;
+    startReportCooldown(30);
+  }catch(e){
+    const msg = e.name === "AbortError" ? "Report request took too long. Please try again." : (e.message || "Report failed.");
+    showError(msg);
+
+    if(btn){
+      btn.disabled = false;
+      btn.textContent = btn.dataset.originalText || "Report this link";
+    }
+  }finally{
+    reportSubmitting = false;
+  }
+}
+
+
+function resetCheckoutState(){
+  const overlay = $("checkoutOverlay");
+
+  if(overlay){
+    overlay.classList.remove("show");
+  }
+
+  document.querySelectorAll("button, .btn").forEach(el => {
+    if(el.dataset.originalText){
+      el.textContent = el.dataset.originalText;
+      el.disabled = false;
+      delete el.dataset.originalText;
+    }
+  });
+}
+
+window.addEventListener("pageshow", resetCheckoutState);
+window.addEventListener("focus", resetCheckoutState);
+document.addEventListener("visibilitychange", () => {
+  if(!document.hidden){
+    resetCheckoutState();
+  }
+});
+
+async function upgrade(plan){
+  const overlay = $("checkoutOverlay");
+
+  try{
+    if(!currentUser){
+      window.location.href = "/login?next=/dashboard";
+      return;
+    }
+
+    if(overlay){
+      overlay.classList.add("show");
+    }
+
+    document.querySelectorAll("button, .btn").forEach(el => {
+      if(el.textContent.toLowerCase().includes("upgrade")){
+        el.dataset.originalText = el.textContent;
+        el.textContent = "Preparing checkout...";
+        el.disabled = true;
+      }
+    });
+
+    const res = await fetch("/create-checkout-session", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({plan})
+    });
+
+    const data = await res.json();
+
+    if(!res.ok){
+      throw new Error(data.error || "Could not start checkout.");
+    }
+
+    window.location.href = data.url;
+  }catch(e){
+    if(overlay){
+      overlay.classList.remove("show");
+    }
+
+    document.querySelectorAll("button, .btn").forEach(el => {
+      if(el.dataset.originalText){
+        el.textContent = el.dataset.originalText;
+        el.disabled = false;
+      }
+    });
+
+    alert(e.message || "Stripe checkout is not ready yet.");
+  }
+}
+
+$("scanBtn").addEventListener("click", scanUrl);
+
+$("urlInput").addEventListener("keydown", (e) => {
+  if(e.key === "Enter"){
+    scanUrl();
+  }
+});
+
+if($("messageCheckBtn")){
+  $("messageCheckBtn").addEventListener("click", checkMessage);
+}
+
+$("reportBtn").addEventListener("click", reportCurrent);
+
+loadMe().then(loadHistory);
 </script>
 </body>
 </html>
