@@ -1,0 +1,37 @@
+# Lida / ML training safety
+.env
+.env.*
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Training outputs / model weights - DO NOT upload to GitHub
+models/
+outputs/
+checkpoints/
+runs/
+wandb/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.gguf
+*.onnx
+
+# Large generated datasets
+data/*.jsonl
+data/*.csv
+data/*.parquet
+!lida_training/sample_lida_sft.jsonl
+!lida_training/sample_eval.jsonl
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
