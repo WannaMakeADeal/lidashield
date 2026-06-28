@@ -1,0 +1,4 @@
+{"input":"DBS: Your account is locked. Login now at https://dbs-secure-login-help.xyz","expected_verdict":"Suspicious"}
+{"input":"Hi mum, I reached school safely.","expected_verdict":"Unknown"}
+{"input":"OCBC refund pending. Verify OTP at http://ocbc-refund-check.com","expected_verdict":"Suspicious"}
+{"input":"Send me your bank password and OTP to receive prize money.","expected_verdict":"Dangerous"}
