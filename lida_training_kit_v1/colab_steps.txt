@@ -1,0 +1,15 @@
+Lida Colab Steps
+
+1. Open Google Colab.
+2. Runtime > Change runtime type > GPU.
+3. Upload this whole lida_training_kit_v1 folder.
+4. Run:
+
+!pip install -r requirements-lida-train.txt
+!python make_lida_dataset.py --sample-only --out data/lida_sft.jsonl
+!python train_lida_qlora.py --model Qwen/Qwen2.5-0.5B-Instruct --data data/lida_sft.jsonl --out models/lida-qwen-0.5b-lora --epochs 1
+!python eval_lida.py --base Qwen/Qwen2.5-0.5B-Instruct --adapter models/lida-qwen-0.5b-lora --eval sample_eval.jsonl
+
+For stronger training, try:
+
+!python train_lida_qlora.py --model Qwen/Qwen2.5-7B-Instruct --data data/lida_sft.jsonl --out models/lida-qwen-7b-lora --epochs 2 --qlora
