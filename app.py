@@ -995,6 +995,35 @@ def ensure_db():
         created_at TIMESTAMP DEFAULT NOW(),
         UNIQUE(training_example_id)
     );
+
+
+    CREATE TABLE IF NOT EXISTS lida_eval_runs (
+        id SERIAL PRIMARY KEY,
+        run_name TEXT DEFAULT 'baseline_analyst_eval',
+        model_name TEXT DEFAULT 'lida_rules_baseline',
+        case_count INT DEFAULT 0,
+        pass_count INT DEFAULT 0,
+        accuracy NUMERIC DEFAULT 0,
+        avg_score_delta NUMERIC DEFAULT 0,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS lida_eval_results (
+        id SERIAL PRIMARY KEY,
+        run_id INT REFERENCES lida_eval_runs(id) ON DELETE CASCADE,
+        eval_case_id INT REFERENCES lida_eval_cases(id) ON DELETE SET NULL,
+        input_text TEXT,
+        expected_verdict TEXT,
+        predicted_verdict TEXT,
+        expected_score INT DEFAULT 0,
+        predicted_score INT DEFAULT 0,
+        score_delta INT DEFAULT 0,
+        passed BOOLEAN DEFAULT FALSE,
+        analyst_summary TEXT,
+        evidence_json TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    );
     """
 
     with get_db() as conn:
@@ -1030,6 +1059,9 @@ def ensure_db():
             cur.execute("CREATE INDEX IF NOT EXISTS idx_training_examples_source ON training_examples(source_type, source_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_training_examples_gold ON training_examples(gold)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_lida_eval_cases_expected ON lida_eval_cases(expected_verdict)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_lida_eval_runs_created ON lida_eval_runs(created_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_lida_eval_results_run ON lida_eval_results(run_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_lida_eval_results_passed ON lida_eval_results(passed)")
 
     _db_ready = True
 
@@ -4079,7 +4111,7 @@ def admin_training_data_page():
 <!doctype html><html><head><title>Lida Training Data Quality Lab</title><meta name='viewport' content='width=device-width,initial-scale=1'>
 <style>
 body{{margin:0;background:#070912;color:#f8f4ec;font-family:Inter,Arial,sans-serif;font-size:18px}}.wrap{{max-width:1720px;margin:0 auto;padding:56px 64px}}h1{{font-size:58px;margin:0 0 12px}}h2{{font-size:34px}}.top{{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}}a,.gold{{color:#ffd34d}}.btn{{display:inline-block;border:1px solid #3a3f50;border-radius:22px;padding:18px 26px;text-decoration:none;color:#fff;background:#151a28;font-weight:900;margin:6px}}button{{border:1px solid #3a3f50;border-radius:16px;padding:12px 18px;background:#151a28;color:#fff;font-weight:900;cursor:pointer}}.goldbtn{{background:#f8b633!important;color:#070912!important;border-color:#f8b633!important}}.dangerbtn{{background:#3b1220!important;color:#ff9db2!important;border-color:#743146!important}}.card{{background:#101625;border:1px solid #283248;border-radius:28px;padding:34px;margin:28px 0}}.note{{background:#211b10;border:1px solid #8a650e;border-radius:24px;padding:24px;margin:28px 0;color:#ffe895}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:18px}}.stat,.item{{background:#1a2130;border:1px solid #30394c;border-radius:22px;padding:22px;margin:16px 0}}.stat b{{display:block;font-size:44px}}.stat span,.muted{{color:#aecaef}}pre{{white-space:pre-wrap;font-family:ui-monospace,monospace;background:#0b0f19;border:1px solid #2b3346;border-radius:16px;padding:16px;color:#e8f0ff}}.actions{{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}}
-</style></head><body><div class='wrap'><div class='top'><div><h1>Lida Training Data Quality Lab</h1><div class='muted'>This is where Lida becomes trainable. Candidate data is not enough. We approve, reject, and mark gold examples before fine-tuning.</div></div><div><a class='btn' href='/dashboard'>Dashboard</a><a class='btn' href='/admin/reports'>Intelligence</a><a class='btn' href='/admin/feedback'>Feedback</a></div></div>
+</style></head><body><div class='wrap'><div class='top'><div><h1>Lida Training Data Quality Lab</h1><div class='muted'>This is where Lida becomes trainable. Candidate data is not enough. We approve, reject, and mark gold examples before fine-tuning.</div></div><div><a class='btn' href='/dashboard'>Dashboard</a><a class='btn' href='/admin/reports'>Intelligence</a><a class='btn' href='/admin/feedback'>Feedback</a><a class='btn' href='/admin/lida-brain'>Lida Brain</a></div></div>
 <div class='note'><b>New rule:</b> Lida trains only on approved or gold examples. Candidate rows are raw material. Rejected rows become anti-examples and quality control.</div>
 <div class='card'><h2>Actions</h2><form method='post' action='/admin/api/training/build' style='display:inline'><button class='goldbtn' type='submit'>Build training candidates</button></form><form method='post' action='/admin/api/training/build-eval' style='display:inline'><button type='submit'>Build evaluation set</button></form><a class='btn' href='/admin/api/training/export-jsonl'>Download approved SFT JSONL</a><a class='btn' href='/admin/api/training/export-jsonl?status=candidate'>Download candidates JSONL</a><a class='btn' href='/admin/api/training/eval-jsonl'>Download eval JSONL</a><a class='btn' href='/admin/api/training/summary'>Summary JSON</a></div>
 <div class='card'><h2>Model readiness</h2><div class='grid'>{ready_html}</div></div>
@@ -4244,6 +4276,227 @@ def admin_export_eval_jsonl():
             rows = cur.fetchall()
     body = "\n".join(json.dumps(eval_jsonl_record(r), ensure_ascii=False) for r in rows) + ("\n" if rows else "")
     return Response(body, mimetype="application/jsonl", headers={"Content-Disposition": "attachment; filename=lida_eval_cases.jsonl"})
+
+
+# ============================================================
+# Lida model evaluation harness and brain console
+# ============================================================
+
+def verdict_family(verdict):
+    v = (verdict or "unknown").lower().strip()
+    if v in ("dangerous", "malicious", "phishing"):
+        return "dangerous"
+    if v in ("suspicious", "high_risk", "warning"):
+        return "suspicious"
+    return "unknown"
+
+
+def lida_eval_pass(expected_verdict, predicted_verdict, expected_score, predicted_score):
+    exp = verdict_family(expected_verdict)
+    pred = verdict_family(predicted_verdict)
+    expected_score = int(expected_score or 0)
+    predicted_score = int(predicted_score or 0)
+    delta = abs(expected_score - predicted_score)
+
+    if exp == "dangerous":
+        return pred == "dangerous" and delta <= 30
+    if exp == "suspicious":
+        return pred in ("suspicious", "dangerous") and delta <= 30
+    return pred == "unknown" and predicted_score < 65
+
+
+def run_lida_baseline_evaluation(limit=200):
+    """Evaluate the current database-backed analyst before any fine-tuning.
+    This is the safety gate: no Lida model gets trained/deployed unless it can beat this baseline.
+    """
+    rows = []
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, input_type, input_text, expected_verdict, expected_score, expected_category, evidence_json
+                FROM lida_eval_cases
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (int(limit),)
+            )
+            rows = cur.fetchall()
+
+            cur.execute(
+                """
+                INSERT INTO lida_eval_runs (run_name, model_name, case_count, notes)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+                """,
+                ("baseline_analyst_eval", "lida_database_analyst_v1", len(rows), "Rules/database baseline. Future open-source Lida model must beat this."),
+            )
+            run_id = cur.fetchone()["id"]
+
+            pass_count = 0
+            deltas = []
+            for row in rows:
+                analysis = analyze_scam_message(row.get("input_text") or "")
+                expected_verdict = row.get("expected_verdict") or "unknown"
+                expected_score = int(row.get("expected_score") or 0)
+                predicted_verdict = analysis.get("verdict") or "unknown"
+                predicted_score = int(analysis.get("score") or 0)
+                delta = abs(expected_score - predicted_score)
+                passed = lida_eval_pass(expected_verdict, predicted_verdict, expected_score, predicted_score)
+                if passed:
+                    pass_count += 1
+                deltas.append(delta)
+                cur.execute(
+                    """
+                    INSERT INTO lida_eval_results
+                    (run_id, eval_case_id, input_text, expected_verdict, predicted_verdict, expected_score, predicted_score, score_delta, passed, analyst_summary, evidence_json)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (
+                        run_id,
+                        row.get("id"),
+                        (row.get("input_text") or "")[:5000],
+                        expected_verdict,
+                        predicted_verdict,
+                        expected_score,
+                        predicted_score,
+                        delta,
+                        bool(passed),
+                        analysis.get("analyst_summary") or "",
+                        json.dumps(analysis.get("evidence", []), ensure_ascii=False),
+                    ),
+                )
+
+            accuracy = round((pass_count / len(rows) * 100), 2) if rows else 0
+            avg_delta = round((sum(deltas) / len(deltas)), 2) if deltas else 0
+            cur.execute(
+                """
+                UPDATE lida_eval_runs
+                SET pass_count=%s, accuracy=%s, avg_score_delta=%s
+                WHERE id=%s
+                """,
+                (pass_count, accuracy, avg_delta, run_id),
+            )
+    return {"run_id": run_id, "case_count": len(rows), "pass_count": pass_count, "accuracy": accuracy, "avg_score_delta": avg_delta}
+
+
+@app.route("/admin/api/lida/evaluate-baseline", methods=["POST"])
+def admin_lida_evaluate_baseline():
+    admin_check = require_admin()
+    if admin_check:
+        return admin_check
+    result = run_lida_baseline_evaluation(limit=300)
+    return redirect("/admin/lida-brain")
+
+
+@app.route("/admin/api/lida/eval-summary")
+def admin_lida_eval_summary():
+    admin_check = require_admin()
+    if admin_check:
+        return admin_check
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM lida_eval_runs ORDER BY created_at DESC LIMIT 10")
+            runs = cur.fetchall()
+            cur.execute("SELECT COUNT(*) AS count FROM lida_eval_cases")
+            cases = cur.fetchone().get("count")
+            cur.execute("SELECT COUNT(*) AS count FROM training_examples WHERE status IN ('approved','gold') OR gold = TRUE")
+            approved = cur.fetchone().get("count")
+            cur.execute("SELECT COUNT(*) AS count FROM training_examples WHERE gold = TRUE OR status = 'gold'")
+            gold = cur.fetchone().get("count")
+    return jsonify({"ok": True, "eval_cases": cases, "approved_examples": approved, "gold_examples": gold, "recent_runs": runs})
+
+
+@app.route("/api/lida/analyze", methods=["POST"])
+def api_lida_analyze():
+    """Stable Lida API endpoint for future apps/extensions.
+    It uses the same database-backed analyst as the website, but returns a clean API shape.
+    """
+    data = request.get_json(silent=True) or {}
+    text = (data.get("message") or data.get("text") or "").strip()
+    if not text:
+        return jsonify({"ok": False, "error": "Send message or text."}), 400
+    if len(text) > 5000:
+        return jsonify({"ok": False, "error": "Text is too long. Keep it under 5000 characters."}), 400
+    user = get_current_user()
+    analysis = analyze_scam_message(text)
+    save_message_check(user["id"] if user else None, text, analysis)
+    return jsonify({
+        "ok": True,
+        "product": "LidaShield",
+        "assistant": "Lida",
+        "analysis_mode": "database_backed_lida_api_v12",
+        "input": text,
+        "verdict": analysis.get("verdict"),
+        "score": analysis.get("score"),
+        "summary": analysis.get("analyst_summary"),
+        "indicators": analysis.get("extracted_indicators"),
+        "evidence": analysis.get("evidence"),
+        "recommended_action": "Do not enter OTPs, passwords, bank details, card details, or payment info unless you independently verify through the official app or official website."
+    })
+
+
+@app.route("/admin/lida-brain")
+def admin_lida_brain_page():
+    admin_check = require_admin()
+    if admin_check:
+        return admin_check
+
+    readiness = training_readiness_summary()
+    runs = []
+    failed = []
+    counts = {}
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS count FROM training_examples WHERE status='candidate'")
+            counts["candidate"] = cur.fetchone().get("count")
+            cur.execute("SELECT COUNT(*) AS count FROM training_examples WHERE status IN ('approved','gold') OR gold=TRUE")
+            counts["approved"] = cur.fetchone().get("count")
+            cur.execute("SELECT COUNT(*) AS count FROM training_examples WHERE gold=TRUE OR status='gold'")
+            counts["gold"] = cur.fetchone().get("count")
+            cur.execute("SELECT COUNT(*) AS count FROM lida_eval_cases")
+            counts["eval_cases"] = cur.fetchone().get("count")
+            cur.execute("SELECT * FROM lida_eval_runs ORDER BY created_at DESC LIMIT 8")
+            runs = cur.fetchall()
+            cur.execute(
+                """
+                SELECT r.*, c.expected_category
+                FROM lida_eval_results r
+                LEFT JOIN lida_eval_cases c ON c.id = r.eval_case_id
+                WHERE r.passed = FALSE
+                ORDER BY r.created_at DESC
+                LIMIT 20
+                """
+            )
+            failed = cur.fetchall()
+
+    def e3(x):
+        return html.escape(str(x if x is not None else ""))
+
+    ready_html = "".join(f"<div class='stat'><b>{e3(v)}</b><span>{e3(k.replace('_',' '))}</span></div>" for k, v in readiness.items())
+    count_html = "".join(f"<div class='stat'><b>{e3(v)}</b><span>{e3(k.replace('_',' '))}</span></div>" for k, v in counts.items())
+    run_html = "".join(
+        f"<div class='item'><b>Run #{e3(r.get('id'))} · {e3(r.get('accuracy'))}%</b><div class='muted'>{e3(r.get('model_name'))} · {e3(r.get('pass_count'))}/{e3(r.get('case_count'))} passed · avg delta {e3(r.get('avg_score_delta'))} · {e3(r.get('created_at'))}</div></div>"
+        for r in runs
+    ) or "<p>No evaluation runs yet. Build eval cases, then run baseline evaluation.</p>"
+    failed_html = "".join(
+        f"<div class='item'><b>Expected {e3(f.get('expected_verdict'))} / Predicted {e3(f.get('predicted_verdict'))}</b><div class='muted'>Score {e3(f.get('expected_score'))} → {e3(f.get('predicted_score'))}, delta {e3(f.get('score_delta'))}, category {e3(f.get('expected_category'))}</div><pre>{e3((f.get('input_text') or '')[:900])}</pre><p>{e3(f.get('analyst_summary'))}</p></div>"
+        for f in failed
+    ) or "<p>No failed cases from the latest stored results.</p>"
+
+    return f"""
+<!doctype html><html><head><title>Lida Brain Console</title><meta name='viewport' content='width=device-width,initial-scale=1'>
+<style>
+body{{margin:0;background:#050816;color:#f8fafc;font-family:Inter,Arial,sans-serif;font-size:18px}}.wrap{{max-width:1700px;margin:0 auto;padding:56px 64px}}h1{{font-size:60px;margin:0 0 10px;font-family:Georgia,serif}}h2{{font-size:34px}}a{{color:#ffd34d}}.btn,button{{display:inline-block;border:1px solid #38445c;border-radius:18px;padding:14px 20px;text-decoration:none;color:#fff;background:#121827;font-weight:900;margin:6px;cursor:pointer}}.goldbtn{{background:#f8b633!important;color:#050816!important;border-color:#f8b633!important}}.top{{display:flex;justify-content:space-between;gap:24px;align-items:flex-start}}.card,.item,.stat{{background:#111827;border:1px solid #293244;border-radius:24px;padding:24px;margin:18px 0}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}}.stat b{{display:block;font-size:42px}}.muted,.stat span{{color:#9fb0ca}}.note{{background:#211b10;border:1px solid #8a650e;border-radius:24px;padding:22px;color:#ffe895;margin:22px 0}}pre{{white-space:pre-wrap;background:#070b14;border:1px solid #273044;border-radius:16px;padding:14px;color:#e5e7eb}}
+</style></head><body><div class='wrap'><div class='top'><div><h1>Lida Brain Console</h1><div class='muted'>This is the gate between LidaShield data and the future open-source Lida model. We do not train blind. We build data, approve gold examples, create eval cases, then measure the baseline.</div></div><div><a class='btn' href='/dashboard'>Dashboard</a><a class='btn' href='/admin/training-data'>Training Lab</a><a class='btn' href='/admin/reports'>Intelligence</a></div></div>
+<div class='note'><b>Rule:</b> no model is deployed unless it beats the current database-backed Lida analyst on the evaluation set. The AI must improve reliability, not replace evidence.</div>
+<div class='card'><h2>Actions</h2><form method='post' action='/admin/api/training/build' style='display:inline'><button>Build training candidates</button></form><form method='post' action='/admin/api/training/build-eval' style='display:inline'><button>Build eval set</button></form><form method='post' action='/admin/api/lida/evaluate-baseline' style='display:inline'><button class='goldbtn'>Run baseline evaluation</button></form><a class='btn' href='/admin/api/training/export-jsonl'>Approved SFT JSONL</a><a class='btn' href='/admin/api/training/eval-jsonl'>Eval JSONL</a><a class='btn' href='/admin/api/lida/eval-summary'>Eval summary JSON</a></div>
+<div class='card'><h2>Training data counts</h2><div class='grid'>{count_html}</div></div>
+<div class='card'><h2>Model readiness</h2><div class='grid'>{ready_html}</div></div>
+<div class='card'><h2>Recent evaluation runs</h2>{run_html}</div>
+<div class='card'><h2>Failed / weak eval cases</h2>{failed_html}</div>
+</div></body></html>
+"""
 
 
 # ============================================================
